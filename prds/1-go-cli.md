@@ -165,7 +165,7 @@ MCP     →  MCP Protocol           →  MCP Server
 ## Milestones
 
 - [x] **M1: Fetch OpenAPI spec** — Script to fetch `schema/openapi.json` from the `dot-ai` repo (for local dev) and embed it into the CLI build
-- [ ] **M2: Go CLI scaffold** — Root-level Go project with cobra, embedded OpenAPI, root command with global flags (`--server-url`, `--token`, `--output`, `--help`)
+- [x] **M2: Go CLI scaffold** — Root-level Go project with cobra, embedded OpenAPI, root command with global flags (`--server-url`, `--token`, `--output`, `--help`)
 - [ ] **M3: OpenAPI parser** — Go code parses embedded OpenAPI spec into command definitions (name, description, method, path, params with types)
 - [ ] **M4: Dynamic command generation** — Cobra subcommands registered from parsed OpenAPI. `--help` works for all commands. Positional args for primary params and path params, flags for the rest
 - [ ] **M5: HTTP client and execution** — GET/POST/DELETE with query params, JSON body, Bearer auth, error handling (connection, 401, 404, 500, timeout)
