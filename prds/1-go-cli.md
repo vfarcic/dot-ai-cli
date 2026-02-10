@@ -51,6 +51,12 @@ dot-ai manageOrgData --dataType pattern --operation list
 
 # Global options (work with any command)
 dot-ai query "test" --server-url http://remote:3456 --token mytoken --output json
+
+# Generate skills for coding agents (fetches prompts/tools from server)
+dot-ai skills generate --agent claude-code       # → .claude/skills/dot-ai/
+dot-ai skills generate --agent cursor            # → .cursor/skills/dot-ai/
+dot-ai skills generate --path ./custom/skills/   # → arbitrary path for unsupported agents
+# Re-running overwrites generated skills (update mechanism)
 ```
 
 ## Architecture
@@ -180,8 +186,9 @@ MCP     →  MCP Protocol           →  MCP Server
 - [ ] **M9: Notify dot-ai repo** — Open issue/PR on the `dot-ai` repo to add a `repository_dispatch` trigger to its release CI that notifies this CLI repo on each new release
 - [ ] **M10: Documentation** — Installation instructions, usage examples, AI agent integration guide
 - [ ] **M11: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation
-- [ ] **M12: Interactive mode** — REPL for running multiple commands in a session without reconnecting
-- [ ] **M13: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
+- [ ] **M12: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, etc.) and determines the output directory. `--path` flag overrides the directory for unsupported agents. Generated skills are placed in a `dot-ai/` subdirectory (e.g., `.claude/skills/dot-ai/`) to isolate them from user-created skills. Re-running overwrites the subdirectory as an update mechanism. Each skill wraps a CLI command so the agent gets native slash commands backed by the dot-ai server
+- [ ] **M13: Interactive mode** — REPL for running multiple commands in a session without reconnecting
+- [ ] **M14: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
 
 ## Risks & Mitigations
 
