@@ -142,6 +142,12 @@ MCP     →  MCP Protocol           →  MCP Server
 - Makes CLI strictly more capable than MCP (resources, logs, events, visualizations)
 - All endpoints are already in the OpenAPI spec
 
+### Why exclude generic tool endpoints?
+- `POST /api/v1/tools/:toolName` is a catch-all that duplicates every promoted tool command (query, recommend, etc.) but without typed parameters
+- `GET /api/v1/tools` (tool discovery) is an internal/debug endpoint not useful to CLI users
+- Every specific tool is already promoted to a top-level command with full flag support from its OpenAPI schema
+- Keeping the generic commands confuses users: `dot-ai query "test"` vs `dot-ai tools query` do the same thing but the latter has no typed flags
+
 ### Configuration precedence
 1. CLI flags: `--server-url`, `--token`, `--output`
 2. Environment variables: `DOT_AI_URL`, `DOT_AI_AUTH_TOKEN`, `DOT_AI_OUTPUT_FORMAT`
@@ -180,15 +186,16 @@ MCP     →  MCP Protocol           →  MCP Server
 - [x] **M3: OpenAPI parser** — Go code parses embedded OpenAPI spec into command definitions (name, description, method, path, params with types)
 - [x] **M4: Dynamic command generation** — Cobra subcommands registered from parsed OpenAPI. `--help` works for all commands. Positional args for primary params and path params, flags for the rest
 - [x] **M5: HTTP client and execution** — GET/POST/DELETE with query params, JSON body, Bearer auth, error handling (connection, 401, 404, 500, timeout). Integration test infrastructure (docker-compose with `ghcr.io/vfarcic/dot-ai-mock-server:latest`, same pattern as `dot-ai-ui`). Replace existing M3/M4 unit tests with integration tests against mock server. All future milestones include integration tests — no separate test milestone
-- [ ] **M6: Output formatters** — text (human-readable), json (passthrough), yaml
-- [ ] **M7: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
-- [ ] **M8: CI/CD release pipeline** — GitHub Actions workflow triggered by `repository_dispatch` from the `dot-ai` repo on each server release. Fetches `schema/openapi.json`, builds multi-arch binaries, publishes GitHub Release with the same version tag as the server
-- [ ] **M9: Notify dot-ai repo** — Open issue/PR on the `dot-ai` repo to add a `repository_dispatch` trigger to its release CI that notifies this CLI repo on each new release
-- [ ] **M10: Documentation** — Installation instructions, usage examples, AI agent integration guide
-- [ ] **M11: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation
-- [ ] **M12: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, etc.) and determines the output directory. `--path` flag overrides the directory for unsupported agents. Generated skills are placed in a `dot-ai/` subdirectory (e.g., `.claude/skills/dot-ai/`) to isolate them from user-created skills. Re-running overwrites the subdirectory as an update mechanism. Each skill wraps a CLI command so the agent gets native slash commands backed by the dot-ai server
-- [ ] **M13: Interactive mode** — REPL for running multiple commands in a session without reconnecting
-- [ ] **M14: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
+- [ ] **M6: Exclude redundant commands** — Add an exclude list to the OpenAPI parser to filter out generic catch-all endpoints that duplicate promoted commands. Exclude `tools` (`POST /api/v1/tools/:toolName`) since every tool is already promoted to a top-level command with typed flags (query, recommend, remediate, etc.). Exclude `tools-get` (`GET /api/v1/tools`) since tool discovery is not useful as a CLI command. The generic endpoints have no typed parameters, making them strictly inferior to the promoted versions
+- [ ] **M7: Output formatters** — text (human-readable), json (passthrough), yaml
+- [ ] **M8: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
+- [ ] **M9: CI/CD release pipeline** — GitHub Actions workflow triggered by `repository_dispatch` from the `dot-ai` repo on each server release. Fetches `schema/openapi.json`, builds multi-arch binaries, publishes GitHub Release with the same version tag as the server
+- [ ] **M10: Notify dot-ai repo** — Open issue/PR on the `dot-ai` repo to add a `repository_dispatch` trigger to its release CI that notifies this CLI repo on each new release
+- [ ] **M11: Documentation** — Installation instructions, usage examples, AI agent integration guide
+- [ ] **M12: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation
+- [ ] **M13: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, etc.) and determines the output directory. `--path` flag overrides the directory for unsupported agents. Generated skills are placed in a `dot-ai/` subdirectory (e.g., `.claude/skills/dot-ai/`) to isolate them from user-created skills. Re-running overwrites the subdirectory as an update mechanism. Each skill wraps a CLI command so the agent gets native slash commands backed by the dot-ai server
+- [ ] **M14: Interactive mode** — REPL for running multiple commands in a session without reconnecting
+- [ ] **M15: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
 
 ## Risks & Mitigations
 
