@@ -6,7 +6,7 @@ The CLI is generated from the server's OpenAPI spec — all commands, flags, and
 
 ## Status
 
-Under development. See [PRD.md](PRD.md) for the full product requirements document.
+Under development. See [prds/1-go-cli.md](prds/1-go-cli.md) for the full product requirements document.
 
 ## Architecture
 

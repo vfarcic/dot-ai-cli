@@ -1,4 +1,4 @@
-# PRD #371: Auto-Generated Go CLI
+# PRD #1: Auto-Generated Go CLI
 
 ## Problem Statement
 
