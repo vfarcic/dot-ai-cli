@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/vfarcic/dot-ai-cli/internal/client"
+	"github.com/vfarcic/dot-ai-cli/internal/formatter"
 	"github.com/vfarcic/dot-ai-cli/internal/openapi"
 )
 
@@ -143,7 +144,12 @@ func buildCobraCommand(def openapi.CommandDef) *cobra.Command {
 			}
 
 			if len(body) > 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), string(body))
+				formatted, fmtErr := formatter.Format(body, GetConfig().OutputFormat)
+				if fmtErr != nil {
+					fmt.Fprintln(cmd.ErrOrStderr(), fmtErr.Error())
+					os.Exit(client.ExitUsageError)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), formatted)
 			}
 			return nil
 		},

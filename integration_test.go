@@ -3,10 +3,13 @@
 package main_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 var binaryPath string
@@ -45,7 +48,7 @@ func runCLI(t *testing.T, args ...string) (stdout, stderr string, exitCode int) 
 // --- GET endpoints with fixtures ---
 
 func TestResources_GET_ReturnsPods(t *testing.T) {
-	stdout, _, exitCode := runCLI(t, "resources", "--kind", "Pod", "--apiVersion", "v1")
+	stdout, _, exitCode := runCLI(t, "resources", "--kind", "Pod", "--apiVersion", "v1", "--output", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d", exitCode)
 	}
@@ -58,7 +61,7 @@ func TestResources_GET_ReturnsPods(t *testing.T) {
 }
 
 func TestResourcesKinds_GET_ReturnsKinds(t *testing.T) {
-	stdout, _, exitCode := runCLI(t, "resources", "kinds")
+	stdout, _, exitCode := runCLI(t, "resources", "kinds", "--output", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d", exitCode)
 	}
@@ -71,7 +74,7 @@ func TestResourcesKinds_GET_ReturnsKinds(t *testing.T) {
 }
 
 func TestNamespaces_GET_ReturnsList(t *testing.T) {
-	stdout, _, exitCode := runCLI(t, "namespaces")
+	stdout, _, exitCode := runCLI(t, "namespaces", "--output", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d", exitCode)
 	}
@@ -87,7 +90,7 @@ func TestNamespaces_GET_ReturnsList(t *testing.T) {
 }
 
 func TestVisualize_GET_WithPathParam(t *testing.T) {
-	stdout, _, exitCode := runCLI(t, "visualize", "test-session-123")
+	stdout, _, exitCode := runCLI(t, "visualize", "test-session-123", "--output", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d", exitCode)
 	}
@@ -102,7 +105,7 @@ func TestVisualize_GET_WithPathParam(t *testing.T) {
 // --- DELETE endpoint with fixture ---
 
 func TestKnowledgeSource_DELETE_WithPathParam(t *testing.T) {
-	stdout, _, exitCode := runCLI(t, "knowledge", "source", "default/my-docs")
+	stdout, _, exitCode := runCLI(t, "knowledge", "source", "default/my-docs", "--output", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d", exitCode)
 	}
@@ -114,7 +117,7 @@ func TestKnowledgeSource_DELETE_WithPathParam(t *testing.T) {
 // --- POST endpoints with fixtures ---
 
 func TestKnowledgeAsk_POST_WithBody(t *testing.T) {
-	stdout, _, exitCode := runCLI(t, "knowledge", "ask", "how to configure RBAC?", "--limit", "20")
+	stdout, _, exitCode := runCLI(t, "knowledge", "ask", "how to configure RBAC?", "--limit", "20", "--output", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d", exitCode)
 	}
@@ -130,7 +133,8 @@ func TestManageKnowledge_POST_IngestFixture(t *testing.T) {
 	stdout, _, exitCode := runCLI(t, "manageKnowledge",
 		"--operation", "ingest",
 		"--content", "test content",
-		"--uri", "https://example.com/doc.md")
+		"--uri", "https://example.com/doc.md",
+		"--output", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d", exitCode)
 	}
@@ -158,6 +162,54 @@ func TestVersion_POST_NoFixture_ReturnsError(t *testing.T) {
 	}
 	if stderr == "" {
 		t.Error("expected error message on stderr")
+	}
+}
+
+// --- Output format tests ---
+
+func TestDefaultOutput_IsValidYAML(t *testing.T) {
+	stdout, _, exitCode := runCLI(t, "namespaces")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	var result map[string]interface{}
+	if err := yaml.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("default output is not valid YAML: %v\nOutput: %s", err, stdout)
+	}
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
+	}
+	// Must NOT be valid JSON (proves it was converted).
+	if json.Valid([]byte(strings.TrimSpace(stdout))) {
+		t.Error("default output should be YAML, not JSON")
+	}
+}
+
+func TestOutputJSON_IsValidJSON(t *testing.T) {
+	stdout, _, exitCode := runCLI(t, "namespaces", "--output", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("--output json is not valid JSON: %v\nOutput: %s", err, stdout)
+	}
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
+	}
+}
+
+func TestOutputYAML_Explicit(t *testing.T) {
+	stdout, _, exitCode := runCLI(t, "namespaces", "--output", "yaml")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	var result map[string]interface{}
+	if err := yaml.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("--output yaml is not valid YAML: %v\nOutput: %s", err, stdout)
+	}
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
 	}
 }
 

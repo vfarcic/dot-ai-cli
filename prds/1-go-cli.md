@@ -154,9 +154,8 @@ MCP     →  MCP Protocol           →  MCP Server
 3. Defaults: `http://localhost:3456`, no token, `text`
 
 ### Output formats
-- `text` (default): Human-readable, extracts key fields (summary, sessionId, guidance). Tables for resource lists. Follows K8s ecosystem convention (kubectl, helm all default to text).
+- `yaml` (default): Human-readable YAML conversion of JSON responses. Handles any response shape generically without per-endpoint logic.
 - `json`: Raw JSON passthrough of full REST API response. Agents should use `--output json`.
-- `yaml`: YAML serialization of response
 
 ### Testing strategy
 - Integration tests only — no unit tests. Real HTTP against the shared mock server (`ghcr.io/vfarcic/dot-ai-mock-server:latest`) provides higher confidence without duplicating coverage
@@ -187,7 +186,7 @@ MCP     →  MCP Protocol           →  MCP Server
 - [x] **M4: Dynamic command generation** — Cobra subcommands registered from parsed OpenAPI. `--help` works for all commands. Positional args for primary params and path params, flags for the rest
 - [x] **M5: HTTP client and execution** — GET/POST/DELETE with query params, JSON body, Bearer auth, error handling (connection, 401, 404, 500, timeout). Integration test infrastructure (docker-compose with `ghcr.io/vfarcic/dot-ai-mock-server:latest`, same pattern as `dot-ai-ui`). Replace existing M3/M4 unit tests with integration tests against mock server. All future milestones include integration tests — no separate test milestone
 - [x] **M6: Exclude redundant commands** — Add an exclude list to the OpenAPI parser to filter out endpoints that are redundant, internal, or superseded. Exclude: `tools-post` (generic tool execution, duplicates promoted commands), `tools` (tool discovery, internal), `openapi` (spec already embedded in binary), `prompts` and `prompts-get` (replaced by skills generation in M13)
-- [ ] **M7: Output formatters** — text (human-readable), json (passthrough), yaml
+- [x] **M7: Output formatters** — yaml (default, human-readable), json (raw passthrough). Dropped `text` as a separate format — yaml serves the human-readable role
 - [ ] **M8: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
 - [ ] **M9: CI/CD release pipeline** — GitHub Actions workflow triggered by `repository_dispatch` from the `dot-ai` repo on each server release. Fetches `schema/openapi.json`, builds multi-arch binaries, publishes GitHub Release with the same version tag as the server
 - [ ] **M10: Notify dot-ai repo** — Open issue/PR on the `dot-ai` repo to add a `repository_dispatch` trigger to its release CI that notifies this CLI repo on each new release

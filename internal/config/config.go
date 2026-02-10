@@ -4,7 +4,7 @@ import "os"
 
 const (
 	DefaultServerURL    = "http://localhost:3456"
-	DefaultOutputFormat = "text"
+	DefaultOutputFormat = "yaml"
 )
 
 type Config struct {
