@@ -1,0 +1,12 @@
+version: "3"
+
+vars:
+  OPENAPI_URL: https://raw.githubusercontent.com/vfarcic/dot-ai/main/schema/openapi.json
+
+tasks:
+  fetch-spec:
+    desc: Fetch OpenAPI spec from the dot-ai server repo
+    cmds:
+      - curl -sL {{.OPENAPI_URL}} -o openapi.json
+    generates:
+      - openapi.json

@@ -18,3 +18,6 @@ Thumbs.db
 
 # Build
 dist/
+
+# Fetched artifacts
+openapi.json

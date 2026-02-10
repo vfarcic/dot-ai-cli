@@ -11,9 +11,11 @@ Create a Go-based CLI that is **auto-generated from the server's OpenAPI spec**.
 The CLI is just another REST API client — it talks to the server the same way the planned Web UI (PRD #109) would, via standard HTTP requests. Unlike MCP (limited to 8 high-level tools to minimize context window usage), the CLI exposes **all REST API endpoints** since there's no token cost per command.
 
 ```
-Server build → export openapi.json → Go embeds it → go build → multi-arch binaries
-                                          ↓
-                              Parses OpenAPI paths → CLI commands
+Server release → publishes schema/openapi.json → triggers CLI repo CI
+                                                        ↓
+                              CLI CI fetches openapi.json → Go embeds it → go build → multi-arch binaries
+                                                                              ↓
+                                                                Parses OpenAPI paths → CLI commands
 ```
 
 ## User Experience
@@ -63,11 +65,12 @@ MCP     →  MCP Protocol           →  MCP Server
 
 ### How auto-generation works
 
-1. **Server build** exports the OpenAPI spec to `packages/cli/openapi.json`
-2. **Go CLI** embeds `openapi.json` via `go:embed`
-3. At startup, Go parses the OpenAPI paths and schemas to register cobra subcommands dynamically
-4. When server tools/routes change → re-export OpenAPI → rebuild Go binary
-5. Zero manual Go code changes needed for new endpoints
+1. **Server release** publishes the OpenAPI spec at `schema/openapi.json` in the `dot-ai` repo
+2. **Server CI** triggers the CLI repo via `repository_dispatch` on each release
+3. **CLI CI** fetches the OpenAPI spec and embeds it via `go:embed`
+4. At startup, Go parses the OpenAPI paths and schemas to register cobra subcommands dynamically
+5. CLI release is published with the **same version tag** as the server release
+6. Zero manual Go code changes needed for new endpoints
 
 ### OpenAPI → CLI mapping rules
 
@@ -83,10 +86,10 @@ MCP     →  MCP Protocol           →  MCP Server
 ### Go CLI structure
 
 ```
-packages/cli/
+.
 ├── go.mod
 ├── go.sum
-├── openapi.json               # Embedded via go:embed (auto-generated from server)
+├── openapi.json               # Embedded via go:embed (fetched from dot-ai repo)
 ├── main.go                    # Entry point
 ├── cmd/
 │   ├── root.go                # Root command, global flags
@@ -102,7 +105,9 @@ packages/cli/
 │       ├── text.go            # Human-readable output (default)
 │       ├── json.go            # Raw JSON passthrough
 │       └── yaml.go            # YAML output
-└── Makefile                   # Build targets for all OS/arch
+├── Taskfile.yml               # Build targets for all OS/arch (taskfile.dev)
+└── .github/workflows/
+    └── release.yaml           # CI: triggered by dot-ai release, builds & publishes CLI
 ```
 
 ## Technical Decisions
@@ -159,30 +164,33 @@ packages/cli/
 
 ## Milestones
 
-- [ ] **M1: OpenAPI export** — Script/npm command to export server's OpenAPI spec to `packages/cli/openapi.json`
-- [ ] **M2: Go CLI scaffold** — `packages/cli/` with cobra, embedded OpenAPI, root command with global flags (`--server-url`, `--token`, `--output`, `--help`)
+- [x] **M1: Fetch OpenAPI spec** — Script to fetch `schema/openapi.json` from the `dot-ai` repo (for local dev) and embed it into the CLI build
+- [ ] **M2: Go CLI scaffold** — Root-level Go project with cobra, embedded OpenAPI, root command with global flags (`--server-url`, `--token`, `--output`, `--help`)
 - [ ] **M3: OpenAPI parser** — Go code parses embedded OpenAPI spec into command definitions (name, description, method, path, params with types)
 - [ ] **M4: Dynamic command generation** — Cobra subcommands registered from parsed OpenAPI. `--help` works for all commands. Positional args for primary params and path params, flags for the rest
 - [ ] **M5: HTTP client and execution** — GET/POST/DELETE with query params, JSON body, Bearer auth, error handling (connection, 401, 404, 500, timeout)
 - [ ] **M6: Output formatters** — text (human-readable), json (passthrough), yaml
-- [ ] **M7: Multi-arch build** — Makefile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
-- [ ] **M8: Integration tests** — OpenAPI parsing, CLI help, tool execution, error scenarios, output formats
-- [ ] **M9: Documentation** — Installation instructions, usage examples, AI agent integration guide
-- [ ] **M10: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation
-- [ ] **M11: Interactive mode** — REPL for running multiple commands in a session without reconnecting
-- [ ] **M12: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
+- [ ] **M7: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
+- [ ] **M8: CI/CD release pipeline** — GitHub Actions workflow triggered by `repository_dispatch` from the `dot-ai` repo on each server release. Fetches `schema/openapi.json`, builds multi-arch binaries, publishes GitHub Release with the same version tag as the server
+- [ ] **M9: Notify dot-ai repo** — Open issue/PR on the `dot-ai` repo to add a `repository_dispatch` trigger to its release CI that notifies this CLI repo on each new release
+- [ ] **M10: Integration tests** — OpenAPI parsing, CLI help, tool execution, error scenarios, output formats
+- [ ] **M11: Documentation** — Installation instructions, usage examples, AI agent integration guide
+- [ ] **M12: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation
+- [ ] **M13: Interactive mode** — REPL for running multiple commands in a session without reconnecting
+- [ ] **M14: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
 
 ## Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| Go adds a new language to the project | CLI is isolated in `packages/cli/`, minimal Go code (~500-700 lines). All server code stays TypeScript. |
-| OpenAPI spec gets out of sync with CLI | CI check: export OpenAPI, compare with embedded copy, fail if different. |
+| Go adds a new language to the project | CLI is in its own repo (`dot-ai-cli`), minimal Go code (~500-700 lines). All server code stays TypeScript. |
+| OpenAPI spec gets out of sync with CLI | Server release automatically triggers CLI rebuild with the latest `schema/openapi.json`. Versions are locked 1:1. |
 | Complex tool params hard to map to CLI flags | Use JSON string for object/array params: `--answers '{"key":"value"}'`. Document in help. |
 | Some endpoints may not be useful as CLI commands | Can add an exclude list in the OpenAPI parser for internal endpoints. |
+| CLI-only bug fix requires server release | Add manual workflow dispatch as escape hatch for CLI-only fixes. |
 
 ## Dependencies
 
-- OpenAPI spec generation — already implemented (`src/interfaces/openapi-generator.ts`)
-- REST API endpoints — already implemented (`src/interfaces/rest-api.ts`, `src/interfaces/routes/index.ts`)
-- All 18 REST routes with Zod schemas — already defined (`src/interfaces/routes/index.ts`)
+- OpenAPI spec — published by the `dot-ai` server repo at `schema/openapi.json`, updated with every release
+- REST API endpoints — already implemented in the `dot-ai` repo
+- `dot-ai` CI update (M9) — server repo needs a `repository_dispatch` trigger added to its release workflow to notify this CLI repo
