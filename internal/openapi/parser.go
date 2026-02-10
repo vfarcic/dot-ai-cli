@@ -38,6 +38,16 @@ type CommandDef struct {
 
 const pathPrefix = "/api/v1/"
 
+// excludedPaths lists API paths to omit from CLI command generation.
+// These are redundant, internal, or superseded endpoints (see PRD M6).
+var excludedPaths = map[string]bool{
+	"/api/v1/tools/{toolName}": true, // generic tool execution; duplicates promoted commands
+	"/api/v1/tools":            true, // tool discovery; internal/debug only
+	"/api/v1/openapi":          true, // returns spec already embedded in binary
+	"/api/v1/prompts/{promptName}": true, // replaced by skills generation (M13)
+	"/api/v1/prompts":              true, // replaced by skills generation (M13)
+}
+
 // Parse parses an OpenAPI 3.0 JSON spec and returns CLI command definitions.
 // Only paths under /api/v1/ are processed; all others are ignored.
 func Parse(specJSON []byte) ([]CommandDef, error) {
@@ -141,6 +151,9 @@ func (p *parser) buildCommands() []CommandDef {
 
 	for path, item := range p.spec.Paths {
 		if !strings.HasPrefix(path, pathPrefix) {
+			continue
+		}
+		if excludedPaths[path] {
 			continue
 		}
 

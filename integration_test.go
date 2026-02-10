@@ -215,6 +215,20 @@ func TestCommandHelp_NoServerRequired(t *testing.T) {
 	}
 }
 
+func TestHelp_ExcludedCommandsAbsent(t *testing.T) {
+	cmd := exec.Command(binaryPath, "--help")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	stdout := string(out)
+	for _, excluded := range []string{"tools-post", "openapi", "prompts"} {
+		if strings.Contains(stdout, excluded) {
+			t.Errorf("expected excluded command %q to be absent from help, but found it in:\n%s", excluded, stdout)
+		}
+	}
+}
+
 func TestHelp_RequiredFlagsMarked(t *testing.T) {
 	cmd := exec.Command(binaryPath, "resources", "--help")
 	out, err := cmd.Output()
