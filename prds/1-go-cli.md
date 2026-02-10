@@ -138,13 +138,18 @@ MCP     →  MCP Protocol           →  MCP Server
 
 ### Configuration precedence
 1. CLI flags: `--server-url`, `--token`, `--output`
-2. Environment variables: `DOT_AI_SERVER_URL`, `DOT_AI_AUTH_TOKEN`, `DOT_AI_OUTPUT_FORMAT`
+2. Environment variables: `DOT_AI_URL`, `DOT_AI_AUTH_TOKEN`, `DOT_AI_OUTPUT_FORMAT`
 3. Defaults: `http://localhost:3456`, no token, `text`
 
 ### Output formats
 - `text` (default): Human-readable, extracts key fields (summary, sessionId, guidance). Tables for resource lists. Follows K8s ecosystem convention (kubectl, helm all default to text).
 - `json`: Raw JSON passthrough of full REST API response. Agents should use `--output json`.
 - `yaml`: YAML serialization of response
+
+### Testing strategy
+- Integration tests only — no unit tests. Real HTTP against the shared mock server (`ghcr.io/vfarcic/dot-ai-mock-server:latest`) provides higher confidence without duplicating coverage
+- Same pattern as `dot-ai-ui`: `docker-compose.yml` starts mock server on port 3001, Go tests run against it, CI tears it down
+- Tests validate each milestone incrementally, not as a separate phase
 
 ### Exit codes
 - 0: Success
@@ -168,16 +173,15 @@ MCP     →  MCP Protocol           →  MCP Server
 - [x] **M2: Go CLI scaffold** — Root-level Go project with cobra, embedded OpenAPI, root command with global flags (`--server-url`, `--token`, `--output`, `--help`)
 - [x] **M3: OpenAPI parser** — Go code parses embedded OpenAPI spec into command definitions (name, description, method, path, params with types)
 - [x] **M4: Dynamic command generation** — Cobra subcommands registered from parsed OpenAPI. `--help` works for all commands. Positional args for primary params and path params, flags for the rest
-- [ ] **M5: HTTP client and execution** — GET/POST/DELETE with query params, JSON body, Bearer auth, error handling (connection, 401, 404, 500, timeout)
+- [x] **M5: HTTP client and execution** — GET/POST/DELETE with query params, JSON body, Bearer auth, error handling (connection, 401, 404, 500, timeout). Integration test infrastructure (docker-compose with `ghcr.io/vfarcic/dot-ai-mock-server:latest`, same pattern as `dot-ai-ui`). Replace existing M3/M4 unit tests with integration tests against mock server. All future milestones include integration tests — no separate test milestone
 - [ ] **M6: Output formatters** — text (human-readable), json (passthrough), yaml
 - [ ] **M7: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
 - [ ] **M8: CI/CD release pipeline** — GitHub Actions workflow triggered by `repository_dispatch` from the `dot-ai` repo on each server release. Fetches `schema/openapi.json`, builds multi-arch binaries, publishes GitHub Release with the same version tag as the server
 - [ ] **M9: Notify dot-ai repo** — Open issue/PR on the `dot-ai` repo to add a `repository_dispatch` trigger to its release CI that notifies this CLI repo on each new release
-- [ ] **M10: Integration tests** — OpenAPI parsing, CLI help, tool execution, error scenarios, output formats
-- [ ] **M11: Documentation** — Installation instructions, usage examples, AI agent integration guide
-- [ ] **M12: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation
-- [ ] **M13: Interactive mode** — REPL for running multiple commands in a session without reconnecting
-- [ ] **M14: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
+- [ ] **M10: Documentation** — Installation instructions, usage examples, AI agent integration guide
+- [ ] **M11: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation
+- [ ] **M12: Interactive mode** — REPL for running multiple commands in a session without reconnecting
+- [ ] **M13: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
 
 ## Risks & Mitigations
 

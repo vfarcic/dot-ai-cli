@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/vfarcic/dot-ai-cli/internal/client"
 	"github.com/vfarcic/dot-ai-cli/internal/config"
 )
 
@@ -22,7 +23,7 @@ func Execute(openapiSpec []byte) {
 	RegisterDynamicCommands(openapiSpec)
 
 	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+		os.Exit(client.ExitUsageError)
 	}
 }
 
@@ -33,7 +34,7 @@ func GetConfig() *config.Config {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	rootCmd.PersistentFlags().StringVar(&cfg.ServerURL, "server-url", "", "Server URL (env: DOT_AI_SERVER_URL)")
+	rootCmd.PersistentFlags().StringVar(&cfg.ServerURL, "server-url", "", "Server URL (env: DOT_AI_URL)")
 	rootCmd.PersistentFlags().StringVar(&cfg.Token, "token", "", "Authentication token (env: DOT_AI_AUTH_TOKEN)")
 	rootCmd.PersistentFlags().StringVar(&cfg.OutputFormat, "output", "", "Output format: text, json, yaml (env: DOT_AI_OUTPUT_FORMAT)")
 }

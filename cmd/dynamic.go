@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/vfarcic/dot-ai-cli/internal/client"
 	"github.com/vfarcic/dot-ai-cli/internal/openapi"
 )
 
@@ -125,7 +126,25 @@ func buildCobraCommand(def openapi.CommandDef) *cobra.Command {
 		},
 		Args: positionalArgsValidator(positional),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cmd.Println("Command execution not yet implemented")
+			var params []paramInfo
+			if err := json.Unmarshal([]byte(cmd.Annotations["params"]), &params); err != nil {
+				return fmt.Errorf("internal error: failed to parse param metadata: %w", err)
+			}
+
+			resolved := resolveParams(cmd, args, params)
+
+			body, err := client.Do(GetConfig(), cmd.Annotations["method"], cmd.Annotations["path"], resolved)
+			if err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+				if reqErr, ok := err.(*client.RequestError); ok {
+					os.Exit(reqErr.ExitCode)
+				}
+				os.Exit(client.ExitToolError)
+			}
+
+			if len(body) > 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), string(body))
+			}
 			return nil
 		},
 	}
@@ -217,6 +236,9 @@ func positionalArgsValidator(positional []openapi.ParamDef) cobra.PositionalArgs
 // registerFlag adds a flag to cmd based on the parameter definition.
 func registerFlag(cmd *cobra.Command, p openapi.ParamDef) {
 	desc := p.Description
+	if p.Required {
+		desc = "(required) " + desc
+	}
 	if len(p.Enum) > 0 {
 		desc += fmt.Sprintf(" (one of: %s)", strings.Join(p.Enum, ", "))
 	}
@@ -275,6 +297,37 @@ func validateEnums(cmd *cobra.Command, enums []enumFlag) error {
 		}
 	}
 	return nil
+}
+
+// resolveParams maps positional args and flags to client.Param values.
+func resolveParams(cmd *cobra.Command, args []string, infos []paramInfo) []client.Param {
+	var resolved []client.Param
+	positionalIdx := 0
+
+	for _, info := range infos {
+		if info.Positional {
+			if positionalIdx < len(args) {
+				resolved = append(resolved, client.Param{
+					Name:     info.Name,
+					Value:    args[positionalIdx],
+					Location: info.Location,
+				})
+				positionalIdx++
+			}
+		} else {
+			f := cmd.Flags().Lookup(info.Name)
+			if f == nil || !f.Changed {
+				continue
+			}
+			resolved = append(resolved, client.Param{
+				Name:     info.Name,
+				Value:    f.Value.String(),
+				Location: info.Location,
+			})
+		}
+	}
+
+	return resolved
 }
 
 // buildParamInfos creates metadata for command annotations. Positional

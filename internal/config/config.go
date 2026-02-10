@@ -19,7 +19,7 @@ type Config struct {
 // then to the default.
 func (c *Config) Resolve() {
 	if c.ServerURL == "" {
-		c.ServerURL = envOrDefault("DOT_AI_SERVER_URL", DefaultServerURL)
+		c.ServerURL = envOrDefault("DOT_AI_URL", DefaultServerURL)
 	}
 	if c.Token == "" {
 		c.Token = os.Getenv("DOT_AI_AUTH_TOKEN")

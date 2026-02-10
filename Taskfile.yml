@@ -10,3 +10,29 @@ tasks:
       - curl -sL {{.OPENAPI_URL}} -o openapi.json
     generates:
       - openapi.json
+
+  mock-up:
+    desc: Start mock server for integration tests
+    cmds:
+      - docker compose up -d
+      - |
+        for i in $(seq 1 30); do
+          if curl -sf http://localhost:3001/health > /dev/null 2>&1; then
+            echo "Mock server ready"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Mock server failed to start"
+        exit 1
+
+  mock-down:
+    desc: Stop mock server
+    cmds:
+      - docker compose down
+
+  test:
+    desc: Run integration tests (starts mock server automatically)
+    deps: [mock-up]
+    cmds:
+      - go test -tags integration -v -count=1 ./...
