@@ -187,7 +187,7 @@ MCP     →  MCP Protocol           →  MCP Server
 - [x] **M5: HTTP client and execution** — GET/POST/DELETE with query params, JSON body, Bearer auth, error handling (connection, 401, 404, 500, timeout). Integration test infrastructure (docker-compose with `ghcr.io/vfarcic/dot-ai-mock-server:latest`, same pattern as `dot-ai-ui`). Replace existing M3/M4 unit tests with integration tests against mock server. All future milestones include integration tests — no separate test milestone
 - [x] **M6: Exclude redundant commands** — Add an exclude list to the OpenAPI parser to filter out endpoints that are redundant, internal, or superseded. Exclude: `tools-post` (generic tool execution, duplicates promoted commands), `tools` (tool discovery, internal), `openapi` (spec already embedded in binary), `prompts` and `prompts-get` (replaced by skills generation in M13)
 - [x] **M7: Output formatters** — yaml (default, human-readable), json (raw passthrough). Dropped `text` as a separate format — yaml serves the human-readable role
-- [ ] **M8: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
+- [x] **M8: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
 - [ ] **M9: CI/CD release pipeline** — GitHub Actions workflow triggered by `repository_dispatch` from the `dot-ai` repo on each server release. Fetches `schema/openapi.json`, builds multi-arch binaries, publishes GitHub Release with the same version tag as the server
 - [ ] **M10: Notify dot-ai repo** — Open issue/PR on the `dot-ai` repo to add a `repository_dispatch` trigger to its release CI that notifies this CLI repo on each new release
 - [ ] **M11: Documentation** — Installation instructions, usage examples, AI agent integration guide
@@ -195,6 +195,7 @@ MCP     →  MCP Protocol           →  MCP Server
 - [ ] **M13: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, etc.) and determines the output directory. `--path` flag overrides the directory for unsupported agents. Generated skills are placed in a `dot-ai/` subdirectory (e.g., `.claude/skills/dot-ai/`) to isolate them from user-created skills. Re-running overwrites the subdirectory as an update mechanism. Each skill wraps a CLI command so the agent gets native slash commands backed by the dot-ai server
 - [ ] **M14: Interactive mode** — REPL for running multiple commands in a session without reconnecting
 - [ ] **M15: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
+- [ ] **M16: Package manager distribution** — Homebrew tap (`brew install dot-ai`) as the primary package manager. Automate tap formula updates in the release pipeline (M9) so each GitHub Release triggers a formula bump. Optionally add Scoop bucket for Windows users. Depends on M9
 
 ## Risks & Mitigations
 
