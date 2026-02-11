@@ -281,6 +281,87 @@ func TestHelp_ExcludedCommandsAbsent(t *testing.T) {
 	}
 }
 
+// --- Shell completion ---
+
+func TestCompletion_Bash_GeneratesScript(t *testing.T) {
+	cmd := exec.Command(binaryPath, "completion", "bash")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	if !strings.Contains(string(out), "bash completion") {
+		t.Errorf("expected bash completion script, got: %s", string(out)[:100])
+	}
+}
+
+func TestCompletion_Zsh_GeneratesScript(t *testing.T) {
+	cmd := exec.Command(binaryPath, "completion", "zsh")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	if !strings.Contains(string(out), "compdef") {
+		t.Errorf("expected zsh compdef in script, got: %s", string(out)[:100])
+	}
+}
+
+func TestCompletion_Fish_GeneratesScript(t *testing.T) {
+	cmd := exec.Command(binaryPath, "completion", "fish")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	if !strings.Contains(string(out), "complete") {
+		t.Errorf("expected fish complete commands, got: %s", string(out)[:100])
+	}
+}
+
+func TestCompletion_EnumFlag_DataType(t *testing.T) {
+	cmd := exec.Command(binaryPath, "__complete", "manageOrgData", "--dataType", "")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	stdout := string(out)
+	for _, val := range []string{"pattern", "policy", "capabilities"} {
+		if !strings.Contains(stdout, val) {
+			t.Errorf("expected completion to include %q, got: %s", val, stdout)
+		}
+	}
+	// Directive :4 means ShellCompDirectiveNoFileComp.
+	if !strings.Contains(stdout, ":4") {
+		t.Errorf("expected NoFileComp directive (:4), got: %s", stdout)
+	}
+}
+
+func TestCompletion_EnumFlag_OutputGlobal(t *testing.T) {
+	cmd := exec.Command(binaryPath, "__complete", "namespaces", "--output", "")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	stdout := string(out)
+	for _, val := range []string{"json", "yaml"} {
+		if !strings.Contains(stdout, val) {
+			t.Errorf("expected completion to include %q, got: %s", val, stdout)
+		}
+	}
+}
+
+func TestCompletion_EnumFlag_RemediateMode(t *testing.T) {
+	cmd := exec.Command(binaryPath, "__complete", "remediate", "--mode", "")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	stdout := string(out)
+	for _, val := range []string{"manual", "automatic"} {
+		if !strings.Contains(stdout, val) {
+			t.Errorf("expected completion to include %q, got: %s", val, stdout)
+		}
+	}
+}
+
 func TestHelp_RequiredFlagsMarked(t *testing.T) {
 	cmd := exec.Command(binaryPath, "resources", "--help")
 	out, err := cmd.Output()

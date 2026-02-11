@@ -168,6 +168,9 @@ func buildCobraCommand(def openapi.CommandDef) *cobra.Command {
 		}
 	}
 
+	// Register enum completion functions for shell tab-completion.
+	registerEnumCompletions(cmd, flags)
+
 	return cmd
 }
 
@@ -269,6 +272,20 @@ func registerFlag(cmd *cobra.Command, p openapi.ParamDef) {
 type enumFlag struct {
 	name   string
 	values []string
+}
+
+// registerEnumCompletions registers shell completion functions for flags
+// that have enum constraints, so tab-completion suggests valid values.
+func registerEnumCompletions(cmd *cobra.Command, flags []openapi.ParamDef) {
+	for _, p := range flags {
+		if len(p.Enum) == 0 {
+			continue
+		}
+		values := p.Enum
+		cmd.RegisterFlagCompletionFunc(p.Name, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return values, cobra.ShellCompDirectiveNoFileComp
+		})
+	}
 }
 
 // collectEnumFlags returns flags that have enum constraints.

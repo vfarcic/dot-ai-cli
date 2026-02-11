@@ -37,6 +37,9 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfg.ServerURL, "server-url", "", "Server URL (env: DOT_AI_URL)")
 	rootCmd.PersistentFlags().StringVar(&cfg.Token, "token", "", "Authentication token (env: DOT_AI_AUTH_TOKEN)")
 	rootCmd.PersistentFlags().StringVar(&cfg.OutputFormat, "output", "", "Output format: json, yaml (default: yaml) (env: DOT_AI_OUTPUT_FORMAT)")
+	rootCmd.RegisterFlagCompletionFunc("output", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
+	})
 }
 
 func initConfig() {
