@@ -79,7 +79,8 @@ type promptMsg struct {
 
 // Generate fetches tools and prompts from the server and writes SKILL.md
 // files to the resolved output directory. Returns the output directory used.
-func Generate(cfg *config.Config, agent, path string) (string, error) {
+// routingSkill is the embedded routing skill content to write as dot-ai/SKILL.md.
+func Generate(cfg *config.Config, agent, path string, routingSkill []byte) (string, error) {
 	outDir, err := resolveDir(agent, path)
 	if err != nil {
 		return "", err
@@ -118,6 +119,13 @@ func Generate(cfg *config.Config, agent, path string) (string, error) {
 				Message:  fmt.Sprintf("Error: failed to write skill for prompt %q: %v", p.Name, err),
 				ExitCode: client.ExitToolError,
 			}
+		}
+	}
+
+	if err := writeRoutingSkill(outDir, routingSkill); err != nil {
+		return "", &client.RequestError{
+			Message:  fmt.Sprintf("Error: failed to write routing skill: %v", err),
+			ExitCode: client.ExitToolError,
 		}
 	}
 
@@ -182,7 +190,8 @@ func renderPrompt(cfg *config.Config, name string) *promptRenderResponse {
 	return &resp
 }
 
-// cleanExisting removes all dot-ai-* directories from the output path.
+// cleanExisting removes the dot-ai routing skill and all dot-ai-* directories
+// from the output path.
 func cleanExisting(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -192,7 +201,7 @@ func cleanExisting(dir string) error {
 		return err
 	}
 	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "dot-ai-") {
+		if e.IsDir() && (e.Name() == "dot-ai" || strings.HasPrefix(e.Name(), "dot-ai-")) {
 			if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
 				return err
 			}
@@ -308,6 +317,14 @@ func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse) e
 	}
 
 	return os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(b.String()), 0o644)
+}
+
+func writeRoutingSkill(dir string, content []byte) error {
+	skillDir := filepath.Join(dir, "dot-ai")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(skillDir, "SKILL.md"), content, 0o644)
 }
 
 // yamlEscape wraps a string in quotes if it contains YAML-special characters.

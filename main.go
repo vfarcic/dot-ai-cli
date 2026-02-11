@@ -9,6 +9,9 @@ import (
 //go:embed openapi.json
 var openapiSpec []byte
 
+//go:embed routing-skill.md
+var routingSkill []byte
+
 func main() {
-	cmd.Execute(openapiSpec)
+	cmd.Execute(openapiSpec, routingSkill)
 }

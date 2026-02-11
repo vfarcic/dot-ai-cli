@@ -516,13 +516,42 @@ func TestSkillsGenerate_AgentClaudeCode(t *testing.T) {
 	}
 }
 
+func TestSkillsGenerate_CreatesRoutingSkill(t *testing.T) {
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "dot-ai", "SKILL.md"))
+	if err != nil {
+		t.Fatal("expected routing skill dot-ai/SKILL.md to exist")
+	}
+	s := string(content)
+	if !strings.Contains(s, "name: dot-ai") {
+		t.Error("routing skill missing name in frontmatter")
+	}
+	if strings.Contains(s, "user-invocable: true") {
+		t.Error("routing skill should NOT be user-invocable")
+	}
+	if !strings.Contains(s, "dot-ai --help") {
+		t.Error("routing skill should reference dot-ai --help")
+	}
+	if !strings.Contains(s, "Kubernetes") {
+		t.Error("routing skill should mention Kubernetes for intent matching")
+	}
+}
+
 func TestSkillsGenerate_CleansExistingOnRerun(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create a stale skill that should be cleaned up.
+	// Create stale skills that should be cleaned up (both prefixed and routing).
 	staleDir := filepath.Join(dir, "dot-ai-stale-skill")
 	os.MkdirAll(staleDir, 0o755)
 	os.WriteFile(filepath.Join(staleDir, "SKILL.md"), []byte("old"), 0o644)
+	staleRouting := filepath.Join(dir, "dot-ai")
+	os.MkdirAll(staleRouting, 0o755)
+	os.WriteFile(filepath.Join(staleRouting, "SKILL.md"), []byte("old routing"), 0o644)
 
 	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir)
 	if exitCode != 0 {
@@ -532,6 +561,15 @@ func TestSkillsGenerate_CleansExistingOnRerun(t *testing.T) {
 	// Stale skill should be gone.
 	if _, err := os.Stat(staleDir); !os.IsNotExist(err) {
 		t.Error("expected stale dot-ai-stale-skill to be removed on re-run")
+	}
+
+	// Routing skill should be regenerated (not stale content).
+	content, err := os.ReadFile(filepath.Join(dir, "dot-ai", "SKILL.md"))
+	if err != nil {
+		t.Fatal("expected routing skill to be regenerated")
+	}
+	if string(content) == "old routing" {
+		t.Error("expected routing skill to have fresh content, not stale")
 	}
 
 	// Fresh skills should exist.

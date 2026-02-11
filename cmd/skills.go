@@ -40,7 +40,7 @@ and regenerates them.`,
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath)
+		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, RoutingSkill)
 		if err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 			if reqErr, ok := err.(*client.RequestError); ok {

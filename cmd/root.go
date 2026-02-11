@@ -19,7 +19,10 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-func Execute(openapiSpec []byte) {
+var RoutingSkill []byte
+
+func Execute(openapiSpec, routingSkill []byte) {
+	RoutingSkill = routingSkill
 	RegisterDynamicCommands(openapiSpec)
 
 	if err := rootCmd.Execute(); err != nil {

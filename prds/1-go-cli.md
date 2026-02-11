@@ -155,6 +155,12 @@ MCP     →  MCP Protocol           →  MCP Server
 - No agent supports category subdirectories within skills (e.g., `.claude/skills/dot-ai/query/` doesn't work). Use a `dot-ai-` name prefix instead to namespace generated skills and avoid collisions with user-created skills
 - Agent output directories: claude-code → `.claude/skills/`, cursor → `.cursor/skills/`, windsurf → `.windsurf/skills/`
 
+### CLI discovery: routing skill for agent awareness
+- Generated prompt skills are complementary to MCP — they expose prompts as skills, not MCP tools
+- To make agents prefer CLI over MCP, `skills generate` also produces a model-invocable `dot-ai` routing skill (not user-invocable) with a keyword-rich description covering all CLI capabilities
+- The description (~65 tokens, always visible) triggers on any relevant user intent (deploy, troubleshoot, query, logs, knowledge search, patterns, project setup, etc.). The agent loads full instructions on demand and self-discovers commands via `dot-ai --help`
+- This replaces MCP's 14K-55K token tool schema cost with ~65 tokens of always-on awareness
+
 ### Configuration precedence
 1. CLI flags: `--server-url`, `--token`, `--output`
 2. Environment variables: `DOT_AI_URL`, `DOT_AI_AUTH_TOKEN`, `DOT_AI_OUTPUT_FORMAT`
@@ -196,7 +202,7 @@ MCP     →  MCP Protocol           →  MCP Server
 - [x] **M7: Output formatters** — yaml (default, human-readable), json (raw passthrough). Dropped `text` as a separate format — yaml serves the human-readable role
 - [x] **M8: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
 - [x] **M12: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation. Uses cobra's built-in `completion` command. Registered `RegisterFlagCompletionFunc` for all enum-constrained flags (dynamic) and global `--output` flag
-- [x] **M13: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, windsurf) and determines the output directory (`.claude/skills/`, `.cursor/skills/`, `.windsurf/skills/`). `--path` flag overrides the directory for unsupported agents. Generated skills use a `dot-ai-` name prefix (e.g., `.claude/skills/dot-ai-query/SKILL.md`) since agents don't support category subdirectories. Re-running deletes existing `dot-ai-*` skill folders and regenerates them (update mechanism). Each skill wraps a CLI command so the agent gets native slash commands backed by the dot-ai server
+- [x] **M13: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, windsurf) and determines the output directory (`.claude/skills/`, `.cursor/skills/`, `.windsurf/skills/`). `--path` flag overrides the directory for unsupported agents. Generated skills use a `dot-ai-` name prefix (e.g., `.claude/skills/dot-ai-query/SKILL.md`) since agents don't support category subdirectories. Re-running deletes existing `dot-ai-*` skill folders and regenerates them (update mechanism). Also generates a model-invocable `dot-ai` routing skill with a keyword-rich description that makes agents aware of the CLI and drives them to use it (via `dot-ai --help`) instead of MCP tools
 - [ ] **M14: Interactive mode** — REPL for running multiple commands in a session without reconnecting
 - [ ] **M15: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
 - [ ] **M11: Documentation** — Installation instructions, usage examples, AI agent integration guide
