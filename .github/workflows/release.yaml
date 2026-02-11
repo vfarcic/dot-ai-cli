@@ -69,3 +69,13 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: task homebrew-publish VERSION="$TAG" HOMEBREW_TAP_TOKEN=${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Update Scoop manifest
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: task scoop-manifest VERSION="$TAG"
+
+      - name: Publish Scoop manifest
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: task scoop-publish VERSION="$TAG" SCOOP_BUCKET_TOKEN=${{ secrets.SCOOP_BUCKET_TOKEN }}

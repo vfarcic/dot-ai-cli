@@ -135,3 +135,57 @@ tasks:
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git diff --cached --quiet || git commit -m "Update dot-ai formula to {{.VERSION}}"
         git push origin main
+
+  scoop-manifest:
+    desc: Generate Scoop manifest from release binaries
+    requires:
+      vars: [VERSION]
+    vars:
+      VERSION_NO_V:
+        sh: echo "{{.VERSION}}" | sed 's/^v//'
+      BASE_URL: https://github.com/vfarcic/dot-ai-cli/releases/download/{{.VERSION}}
+      SHA_WINDOWS_AMD64:
+        sh: grep 'dot-ai-windows-amd64.exe$' dist/checksums.txt | awk '{print $1}'
+    cmds:
+      - |
+        cat > dist/dot-ai.json << MANIFEST
+        {
+            "version": "{{.VERSION_NO_V}}",
+            "description": "CLI for the dot-ai Kubernetes AI assistant",
+            "homepage": "https://github.com/vfarcic/dot-ai-cli",
+            "license": "MIT",
+            "architecture": {
+                "64bit": {
+                    "url": "{{.BASE_URL}}/dot-ai-windows-amd64.exe",
+                    "hash": "{{.SHA_WINDOWS_AMD64}}"
+                }
+            },
+            "bin": [["dot-ai-windows-amd64.exe", "dot-ai"]],
+            "checkver": "github",
+            "autoupdate": {
+                "architecture": {
+                    "64bit": {
+                        "url": "https://github.com/vfarcic/dot-ai-cli/releases/download/v\$version/dot-ai-windows-amd64.exe"
+                    }
+                }
+            }
+        }
+        MANIFEST
+        sed -i.bak -e 's/^        //' dist/dot-ai.json && rm -f dist/dot-ai.json.bak
+
+  scoop-publish:
+    desc: Push Scoop manifest to the bucket repository
+    requires:
+      vars: [VERSION, SCOOP_BUCKET_TOKEN]
+    cmds:
+      - |
+        WORK_DIR=$(mktemp -d)
+        trap 'rm -rf "$WORK_DIR"' EXIT
+        cd "$WORK_DIR"
+        git clone --quiet "https://x-access-token:{{.SCOOP_BUCKET_TOKEN}}@github.com/vfarcic/scoop-bucket.git" .
+        cp {{.TASKFILE_DIR}}/dist/dot-ai.json dot-ai.json
+        git add dot-ai.json
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git diff --cached --quiet || git commit -m "Update dot-ai manifest to {{.VERSION}}"
+        git push origin main
