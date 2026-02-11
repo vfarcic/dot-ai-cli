@@ -45,6 +45,8 @@ func runCLI(t *testing.T, args ...string) (stdout, stderr string, exitCode int) 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("unexpected error running CLI: %v", err)
 		}
 	}
 	return outBuf.String(), errBuf.String(), exitCode

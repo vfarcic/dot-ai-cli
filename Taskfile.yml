@@ -124,8 +124,9 @@ tasks:
       vars: [VERSION, HOMEBREW_TAP_TOKEN]
     cmds:
       - |
-        TMPDIR=$(mktemp -d)
-        cd "$TMPDIR"
+        WORK_DIR=$(mktemp -d)
+        trap 'rm -rf "$WORK_DIR"' EXIT
+        cd "$WORK_DIR"
         git clone --quiet "https://x-access-token:{{.HOMEBREW_TAP_TOKEN}}@github.com/vfarcic/homebrew-tap.git" .
         mkdir -p Formula
         cp {{.TASKFILE_DIR}}/dist/dot-ai.rb Formula/dot-ai.rb
@@ -134,4 +135,3 @@ tasks:
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git diff --cached --quiet || git commit -m "Update dot-ai formula to {{.VERSION}}"
         git push origin main
-        rm -rf "$TMPDIR"
