@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.16.0/.schema/devbox.schema.json",
+  "packages": [
+    "nushell@0.108.0",
+    "kubernetes-helm@3.19.1",
+    "git@2.51.2",
+    "vals@0.42.6",
+    "kind@0.31.0",
+    "kubectl@1.33.4",
+    "gh@2.83.1",
+    "go-task@3.48.0"
+  ],
+  "shell": {
+    "init_hook": [
+      "export PATH=\"$HOME/.local/bin:$PATH\"",
+      "[ -n \"$USE_VALS\" ] && eval \"$(vals env -export -f .env.vals.yaml)\" || true",
+      "[ -f .env ] && source .env || true"
+    ],
+    "scripts": {}
+  }
+}

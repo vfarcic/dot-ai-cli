@@ -11,9 +11,11 @@ Create a Go-based CLI that is **auto-generated from the server's OpenAPI spec**.
 The CLI is just another REST API client — it talks to the server the same way the planned Web UI (PRD #109) would, via standard HTTP requests. Unlike MCP (limited to 8 high-level tools to minimize context window usage), the CLI exposes **all REST API endpoints** since there's no token cost per command.
 
 ```
-Server build → export openapi.json → Go embeds it → go build → multi-arch binaries
-                                          ↓
-                              Parses OpenAPI paths → CLI commands
+Server release → publishes schema/openapi.json → triggers CLI repo CI
+                                                        ↓
+                              CLI CI fetches openapi.json → Go embeds it → go build → multi-arch binaries
+                                                                              ↓
+                                                                Parses OpenAPI paths → CLI commands
 ```
 
 ## User Experience
@@ -49,6 +51,13 @@ dot-ai manageOrgData --dataType pattern --operation list
 
 # Global options (work with any command)
 dot-ai query "test" --server-url http://remote:3456 --token mytoken --output json
+
+# Generate skills for coding agents (fetches prompts/tools from server)
+dot-ai skills generate --agent claude-code       # → .claude/skills/dot-ai-*/SKILL.md
+dot-ai skills generate --agent cursor            # → .cursor/skills/dot-ai-*/SKILL.md
+dot-ai skills generate --agent windsurf          # → .windsurf/skills/dot-ai-*/SKILL.md
+dot-ai skills generate --path ./custom/skills/   # → arbitrary path for unsupported agents
+# Re-running overwrites dot-ai-* skills (update mechanism)
 ```
 
 ## Architecture
@@ -63,11 +72,12 @@ MCP     →  MCP Protocol           →  MCP Server
 
 ### How auto-generation works
 
-1. **Server build** exports the OpenAPI spec to `packages/cli/openapi.json`
-2. **Go CLI** embeds `openapi.json` via `go:embed`
-3. At startup, Go parses the OpenAPI paths and schemas to register cobra subcommands dynamically
-4. When server tools/routes change → re-export OpenAPI → rebuild Go binary
-5. Zero manual Go code changes needed for new endpoints
+1. **Server release** publishes the OpenAPI spec at `schema/openapi.json` in the `dot-ai` repo
+2. **Server CI** triggers the CLI repo via `repository_dispatch` on each release
+3. **CLI CI** fetches the OpenAPI spec and embeds it via `go:embed`
+4. At startup, Go parses the OpenAPI paths and schemas to register cobra subcommands dynamically
+5. CLI release is published with the **same version tag** as the server release
+6. Zero manual Go code changes needed for new endpoints
 
 ### OpenAPI → CLI mapping rules
 
@@ -83,10 +93,10 @@ MCP     →  MCP Protocol           →  MCP Server
 ### Go CLI structure
 
 ```
-packages/cli/
+.
 ├── go.mod
 ├── go.sum
-├── openapi.json               # Embedded via go:embed (auto-generated from server)
+├── openapi.json               # Embedded via go:embed (fetched from dot-ai repo)
 ├── main.go                    # Entry point
 ├── cmd/
 │   ├── root.go                # Root command, global flags
@@ -102,7 +112,9 @@ packages/cli/
 │       ├── text.go            # Human-readable output (default)
 │       ├── json.go            # Raw JSON passthrough
 │       └── yaml.go            # YAML output
-└── Makefile                   # Build targets for all OS/arch
+├── Taskfile.yml               # Build targets for all OS/arch (taskfile.dev)
+└── .github/workflows/
+    └── release.yaml           # CI: triggered by dot-ai release, builds & publishes CLI
 ```
 
 ## Technical Decisions
@@ -131,15 +143,55 @@ packages/cli/
 - Makes CLI strictly more capable than MCP (resources, logs, events, visualizations)
 - All endpoints are already in the OpenAPI spec
 
+### Why exclude redundant endpoints?
+- `tools-post` (`POST /api/v1/tools/:toolName`) — catch-all that duplicates every promoted tool (query, recommend, etc.) without typed parameters. `dot-ai query "test"` vs `dot-ai tools-post query` do the same thing but the latter has no typed flags
+- `tools` (`GET /api/v1/tools`) — tool discovery, internal/debug endpoint not useful to CLI users
+- `openapi` (`GET /api/v1/openapi`) — returns the OpenAPI spec which is already embedded in the binary. Internal/debug use only
+- `prompts` (`POST /api/v1/prompts/:promptName`) and `prompts-get` (`GET /api/v1/prompts`) — prompt functionality will be replaced by local skills generation (M13). The auto-generated names are also confusing (`prompts` is POST, `prompts-get` is the list)
+
+### Skills generation: open standard across agents
+- Claude Code, Cursor, and Windsurf all use the same skills format: `.<agent>/skills/<skill-name>/SKILL.md` with YAML frontmatter
+- Cursor also auto-discovers skills from `.claude/skills/` — Claude Code skills work in Cursor without duplication
+- No agent supports category subdirectories within skills (e.g., `.claude/skills/dot-ai/query/` doesn't work). Use a `dot-ai-` name prefix instead to namespace generated skills and avoid collisions with user-created skills
+- Agent output directories: claude-code → `.claude/skills/`, cursor → `.cursor/skills/`, windsurf → `.windsurf/skills/`
+
+### CLI discovery: routing skill for agent awareness
+- Generated prompt skills are complementary to MCP — they expose prompts as skills, not MCP tools
+- To make agents prefer CLI over MCP, `skills generate` also produces a model-invocable `dot-ai` routing skill (not user-invocable) with a keyword-rich description covering all CLI capabilities
+- The description (~65 tokens, always visible) triggers on any relevant user intent (deploy, troubleshoot, query, logs, knowledge search, patterns, project setup, etc.). The agent loads full instructions on demand and self-discovers commands via `dot-ai --help`
+- This replaces MCP's 14K-55K token tool schema cost with ~65 tokens of always-on awareness
+
+### CLI has full feature parity with MCP
+- From the agent's perspective, multi-step workflows (e.g., recommend with intent → chooseSolution → deploy stages) are orchestrated identically: agent calls tool, gets response, decides next step, calls again
+- MCP and CLI are both stateless request-response transports — the agent is the orchestrator in both cases
+- The CLI exposes all REST API endpoints including those not available via MCP (resources, logs, events), making it strictly a superset
+- Documentation should treat MCP and CLI as peer access methods, not primary/secondary
+
+### Why no REPL / interactive mode?
+- The CLI is a stateless HTTP client — no session state to preserve across commands
+- The shell already provides command history, tab completion (M12), piping, and scripting
+- Go startup is ~10ms, so there's no meaningful overhead to avoid
+- A REPL would duplicate shell features poorly while losing composability
+
+### Why no SSE streaming?
+- Progress cannot be meaningfully deduced — operations like remediate/recommend involve LLM calls with no predictable step count
+- AI agents (the primary CLI consumer) capture stdout and wait for the final result; intermediate progress wastes tokens
+- A simple spinner for human users is trivial without SSE infrastructure
+- Would require server-side changes to emit progress events — a server concern, not a CLI concern
+
 ### Configuration precedence
 1. CLI flags: `--server-url`, `--token`, `--output`
-2. Environment variables: `DOT_AI_SERVER_URL`, `DOT_AI_AUTH_TOKEN`, `DOT_AI_OUTPUT_FORMAT`
-3. Defaults: `http://localhost:3456`, no token, `text`
+2. Environment variables: `DOT_AI_URL`, `DOT_AI_AUTH_TOKEN`, `DOT_AI_OUTPUT_FORMAT`
+3. Defaults: `http://localhost:3456`, no token, `yaml`
 
 ### Output formats
-- `text` (default): Human-readable, extracts key fields (summary, sessionId, guidance). Tables for resource lists. Follows K8s ecosystem convention (kubectl, helm all default to text).
+- `yaml` (default): Human-readable YAML conversion of JSON responses. Handles any response shape generically without per-endpoint logic.
 - `json`: Raw JSON passthrough of full REST API response. Agents should use `--output json`.
-- `yaml`: YAML serialization of response
+
+### Testing strategy
+- Integration tests only — no unit tests. Real HTTP against the shared mock server (`ghcr.io/vfarcic/dot-ai-mock-server:latest`) provides higher confidence without duplicating coverage
+- Same pattern as `dot-ai-ui`: `docker-compose.yml` starts mock server on port 3001, Go tests run against it, CI tears it down
+- Tests validate each milestone incrementally, not as a separate phase
 
 ### Exit codes
 - 0: Success
@@ -159,30 +211,34 @@ packages/cli/
 
 ## Milestones
 
-- [ ] **M1: OpenAPI export** — Script/npm command to export server's OpenAPI spec to `packages/cli/openapi.json`
-- [ ] **M2: Go CLI scaffold** — `packages/cli/` with cobra, embedded OpenAPI, root command with global flags (`--server-url`, `--token`, `--output`, `--help`)
-- [ ] **M3: OpenAPI parser** — Go code parses embedded OpenAPI spec into command definitions (name, description, method, path, params with types)
-- [ ] **M4: Dynamic command generation** — Cobra subcommands registered from parsed OpenAPI. `--help` works for all commands. Positional args for primary params and path params, flags for the rest
-- [ ] **M5: HTTP client and execution** — GET/POST/DELETE with query params, JSON body, Bearer auth, error handling (connection, 401, 404, 500, timeout)
-- [ ] **M6: Output formatters** — text (human-readable), json (passthrough), yaml
-- [ ] **M7: Multi-arch build** — Makefile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
-- [ ] **M8: Integration tests** — OpenAPI parsing, CLI help, tool execution, error scenarios, output formats
-- [ ] **M9: Documentation** — Installation instructions, usage examples, AI agent integration guide
-- [ ] **M10: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation
-- [ ] **M11: Interactive mode** — REPL for running multiple commands in a session without reconnecting
-- [ ] **M12: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
+- [x] **M1: Fetch OpenAPI spec** — Script to fetch `schema/openapi.json` from the `dot-ai` repo (for local dev) and embed it into the CLI build
+- [x] **M2: Go CLI scaffold** — Root-level Go project with cobra, embedded OpenAPI, root command with global flags (`--server-url`, `--token`, `--output`, `--help`)
+- [x] **M3: OpenAPI parser** — Go code parses embedded OpenAPI spec into command definitions (name, description, method, path, params with types)
+- [x] **M4: Dynamic command generation** — Cobra subcommands registered from parsed OpenAPI. `--help` works for all commands. Positional args for primary params and path params, flags for the rest
+- [x] **M5: HTTP client and execution** — GET/POST/DELETE with query params, JSON body, Bearer auth, error handling (connection, 401, 404, 500, timeout). Integration test infrastructure (docker-compose with `ghcr.io/vfarcic/dot-ai-mock-server:latest`, same pattern as `dot-ai-ui`). Replace existing M3/M4 unit tests with integration tests against mock server. All future milestones include integration tests — no separate test milestone
+- [x] **M6: Exclude redundant commands** — Add an exclude list to the OpenAPI parser to filter out endpoints that are redundant, internal, or superseded. Exclude: `tools-post` (generic tool execution, duplicates promoted commands), `tools` (tool discovery, internal), `openapi` (spec already embedded in binary), `prompts` and `prompts-get` (replaced by skills generation in M13)
+- [x] **M7: Output formatters** — yaml (default, human-readable), json (raw passthrough). Dropped `text` as a separate format — yaml serves the human-readable role
+- [x] **M8: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
+- [x] **M12: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation. Uses cobra's built-in `completion` command. Registered `RegisterFlagCompletionFunc` for all enum-constrained flags (dynamic) and global `--output` flag
+- [x] **M13: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, windsurf) and determines the output directory (`.claude/skills/`, `.cursor/skills/`, `.windsurf/skills/`). `--path` flag overrides the directory for unsupported agents. Generated skills use a `dot-ai-` name prefix (e.g., `.claude/skills/dot-ai-query/SKILL.md`) since agents don't support category subdirectories. Re-running deletes existing `dot-ai-*` skill folders and regenerates them (update mechanism). Also generates a model-invocable `dot-ai` routing skill with a keyword-rich description that makes agents aware of the CLI and drives them to use it (via `dot-ai --help`) instead of MCP tools
+- [ ] **M9+M10+M16: CI/CD release pipeline + Homebrew** — GitHub Actions workflow triggered by `repository_dispatch` from the `dot-ai` repo on each server release. Fetches `schema/openapi.json`, builds multi-arch binaries, publishes GitHub Release with the same version tag as the server. Includes Homebrew tap with automated formula updates. Also adds `repository_dispatch` trigger to the server repo's release CI. Done last so the pipeline is built once with all features included
+- [ ] **M11: Documentation** — Setup and installation docs in this repo, following the same pattern as the stack and Web UI repos (each component repo owns its setup docs for the devopstoolkit.ai docs site). Covers: installation (binary download, Homebrew), configuration (server URL, token, output format), shell completion setup, skills generation, verification, and basic usage examples. Feature guides (query, recommend, remediate, etc.) belong on the docs site, not here — they describe server capabilities, not CLI-specific behavior
+- [ ] **M14: Request docs site restructuring** — Create a GitHub issue on `dot-ai` requesting a documentation restructuring. The current docs at devopstoolkit.ai live entirely under `/docs/mcp/` and conflate server capabilities with the MCP access method. The issue should propose splitting into: (1) server capabilities (feature guides, tools overview — access-method-agnostic, examples can use MCP but should note CLI and Web UI parity), and (2) setup/access methods (MCP config, CLI install, Web UI setup — each as a peer). The CLI has full feature parity with MCP — from the agent's perspective, multi-step workflows are orchestrated identically regardless of transport. The issue provides context for the dot-ai agent to create a PRD for the restructuring
+
+> **Implementation order**: M12 → M13 → M9+M10+M16 → M11 → M14. CI/CD and Homebrew come before documentation because M11 documents installation methods (binary download, `brew install`) that require published release artifacts. M16 (Homebrew) is merged into M9 since it needs real release artifacts and the tap automation belongs in the same workflow. M14 (docs restructuring request) is the final milestone — filed after the CLI is fully shipped so the request reflects the complete feature set.
 
 ## Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| Go adds a new language to the project | CLI is isolated in `packages/cli/`, minimal Go code (~500-700 lines). All server code stays TypeScript. |
-| OpenAPI spec gets out of sync with CLI | CI check: export OpenAPI, compare with embedded copy, fail if different. |
+| Go adds a new language to the project | CLI is in its own repo (`dot-ai-cli`), minimal Go code (~500-700 lines). All server code stays TypeScript. |
+| OpenAPI spec gets out of sync with CLI | Server release automatically triggers CLI rebuild with the latest `schema/openapi.json`. Versions are locked 1:1. |
 | Complex tool params hard to map to CLI flags | Use JSON string for object/array params: `--answers '{"key":"value"}'`. Document in help. |
 | Some endpoints may not be useful as CLI commands | Can add an exclude list in the OpenAPI parser for internal endpoints. |
+| CLI-only bug fix requires server release | Add manual workflow dispatch as escape hatch for CLI-only fixes. |
 
 ## Dependencies
 
-- OpenAPI spec generation — already implemented (`src/interfaces/openapi-generator.ts`)
-- REST API endpoints — already implemented (`src/interfaces/rest-api.ts`, `src/interfaces/routes/index.ts`)
-- All 18 REST routes with Zod schemas — already defined (`src/interfaces/routes/index.ts`)
+- OpenAPI spec — published by the `dot-ai` server repo at `schema/openapi.json`, updated with every release
+- REST API endpoints — already implemented in the `dot-ai` repo
+- `dot-ai` CI update (M9) — server repo needs a `repository_dispatch` trigger added to its release workflow to notify this CLI repo
