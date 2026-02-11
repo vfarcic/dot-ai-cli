@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  repository_dispatch:
+    types: [server-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v1.2.3)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - run: task test
+
+      - if: always()
+        run: task mock-down
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "tag=${{ github.event.client_payload.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: task fetch-spec OPENAPI_REF=${{ steps.version.outputs.tag }}
+
+      - run: task build-all
+
+      - run: task checksums
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/dot-ai-linux-amd64
+            dist/dot-ai-linux-arm64
+            dist/dot-ai-darwin-amd64
+            dist/dot-ai-darwin-arm64
+            dist/dot-ai-windows-amd64.exe
+            dist/checksums.txt
+
+      - run: task homebrew-formula VERSION=${{ steps.version.outputs.tag }}
+
+      - run: task homebrew-publish VERSION=${{ steps.version.outputs.tag }} HOMEBREW_TAP_TOKEN=${{ secrets.HOMEBREW_TAP_TOKEN }}

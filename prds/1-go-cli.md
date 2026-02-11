@@ -161,6 +161,24 @@ MCP     →  MCP Protocol           →  MCP Server
 - The description (~65 tokens, always visible) triggers on any relevant user intent (deploy, troubleshoot, query, logs, knowledge search, patterns, project setup, etc.). The agent loads full instructions on demand and self-discovers commands via `dot-ai --help`
 - This replaces MCP's 14K-55K token tool schema cost with ~65 tokens of always-on awareness
 
+### CLI has full feature parity with MCP
+- From the agent's perspective, multi-step workflows (e.g., recommend with intent → chooseSolution → deploy stages) are orchestrated identically: agent calls tool, gets response, decides next step, calls again
+- MCP and CLI are both stateless request-response transports — the agent is the orchestrator in both cases
+- The CLI exposes all REST API endpoints including those not available via MCP (resources, logs, events), making it strictly a superset
+- Documentation should treat MCP and CLI as peer access methods, not primary/secondary
+
+### Why no REPL / interactive mode?
+- The CLI is a stateless HTTP client — no session state to preserve across commands
+- The shell already provides command history, tab completion (M12), piping, and scripting
+- Go startup is ~10ms, so there's no meaningful overhead to avoid
+- A REPL would duplicate shell features poorly while losing composability
+
+### Why no SSE streaming?
+- Progress cannot be meaningfully deduced — operations like remediate/recommend involve LLM calls with no predictable step count
+- AI agents (the primary CLI consumer) capture stdout and wait for the final result; intermediate progress wastes tokens
+- A simple spinner for human users is trivial without SSE infrastructure
+- Would require server-side changes to emit progress events — a server concern, not a CLI concern
+
 ### Configuration precedence
 1. CLI flags: `--server-url`, `--token`, `--output`
 2. Environment variables: `DOT_AI_URL`, `DOT_AI_AUTH_TOKEN`, `DOT_AI_OUTPUT_FORMAT`
@@ -203,12 +221,11 @@ MCP     →  MCP Protocol           →  MCP Server
 - [x] **M8: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
 - [x] **M12: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation. Uses cobra's built-in `completion` command. Registered `RegisterFlagCompletionFunc` for all enum-constrained flags (dynamic) and global `--output` flag
 - [x] **M13: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, windsurf) and determines the output directory (`.claude/skills/`, `.cursor/skills/`, `.windsurf/skills/`). `--path` flag overrides the directory for unsupported agents. Generated skills use a `dot-ai-` name prefix (e.g., `.claude/skills/dot-ai-query/SKILL.md`) since agents don't support category subdirectories. Re-running deletes existing `dot-ai-*` skill folders and regenerates them (update mechanism). Also generates a model-invocable `dot-ai` routing skill with a keyword-rich description that makes agents aware of the CLI and drives them to use it (via `dot-ai --help`) instead of MCP tools
-- [ ] **M14: Interactive mode** — REPL for running multiple commands in a session without reconnecting
-- [ ] **M15: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
-- [ ] **M11: Documentation** — Installation instructions, usage examples, AI agent integration guide
 - [ ] **M9+M10+M16: CI/CD release pipeline + Homebrew** — GitHub Actions workflow triggered by `repository_dispatch` from the `dot-ai` repo on each server release. Fetches `schema/openapi.json`, builds multi-arch binaries, publishes GitHub Release with the same version tag as the server. Includes Homebrew tap with automated formula updates. Also adds `repository_dispatch` trigger to the server repo's release CI. Done last so the pipeline is built once with all features included
+- [ ] **M11: Documentation** — Setup and installation docs in this repo, following the same pattern as the stack and Web UI repos (each component repo owns its setup docs for the devopstoolkit.ai docs site). Covers: installation (binary download, Homebrew), configuration (server URL, token, output format), shell completion setup, skills generation, verification, and basic usage examples. Feature guides (query, recommend, remediate, etc.) belong on the docs site, not here — they describe server capabilities, not CLI-specific behavior
+- [ ] **M14: Request docs site restructuring** — Create a GitHub issue on `dot-ai` requesting a documentation restructuring. The current docs at devopstoolkit.ai live entirely under `/docs/mcp/` and conflate server capabilities with the MCP access method. The issue should propose splitting into: (1) server capabilities (feature guides, tools overview — access-method-agnostic, examples can use MCP but should note CLI and Web UI parity), and (2) setup/access methods (MCP config, CLI install, Web UI setup — each as a peer). The CLI has full feature parity with MCP — from the agent's perspective, multi-step workflows are orchestrated identically regardless of transport. The issue provides context for the dot-ai agent to create a PRD for the restructuring
 
-> **Implementation order**: M12 → M13 → M14 → M15 → M11 → M9+M10+M16. CI/CD is intentionally last so the pipeline is built once with everything included. M16 (Homebrew) is merged into M9 since it needs real release artifacts and the tap automation belongs in the same workflow. Documentation (M11) comes right before CI so it captures all features.
+> **Implementation order**: M12 → M13 → M9+M10+M16 → M11 → M14. CI/CD and Homebrew come before documentation because M11 documents installation methods (binary download, `brew install`) that require published release artifacts. M16 (Homebrew) is merged into M9 since it needs real release artifacts and the tap automation belongs in the same workflow. M14 (docs restructuring request) is the final milestone — filed after the CLI is fully shipped so the request reflects the complete feature set.
 
 ## Risks & Mitigations
 

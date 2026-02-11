@@ -1,6 +1,6 @@
 ---
 name: dot-ai
-description: "Kubernetes cluster operations via dot-ai CLI \u2014 natural language cluster queries, AI-powered deployment recommendations, issue troubleshooting and remediation, Day 2 operations (scale, update, rollback, delete), resources, namespaces, events, logs, organizational knowledge base (ingest, search, query), organizational patterns/policies/capabilities management, project scaffolding and repo audit, and session history and visualization. Run `dot-ai --help` for commands."
+description: "Kubernetes cluster operations via dot-ai CLI - natural language cluster queries, AI-powered deployment recommendations, issue troubleshooting and remediation, Day 2 operations (scale, update, rollback, delete), resources, namespaces, events, logs, organizational knowledge base (ingest, search, query), organizational patterns/policies/capabilities management, project scaffolding and repo audit, and session history and visualization. Run `dot-ai --help` for commands."
 ---
 
 This project uses the dot-ai CLI for Kubernetes and DevOps operations.

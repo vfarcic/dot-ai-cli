@@ -1,7 +1,8 @@
 version: "3"
 
 vars:
-  OPENAPI_URL: https://raw.githubusercontent.com/vfarcic/dot-ai/main/schema/openapi.json
+  OPENAPI_REF: main
+  OPENAPI_URL: https://raw.githubusercontent.com/vfarcic/dot-ai/{{.OPENAPI_REF}}/schema/openapi.json
 
 tasks:
   fetch-spec:
@@ -53,3 +54,83 @@ tasks:
     deps: [mock-up]
     cmds:
       - go test -tags integration -v -count=1 ./...
+
+  checksums:
+    desc: Generate SHA256 checksums for release binaries
+    dir: dist
+    cmds:
+      - shasum -a 256 dot-ai-* > checksums.txt
+
+  homebrew-formula:
+    desc: Generate Homebrew formula from release binaries
+    requires:
+      vars: [VERSION]
+    vars:
+      VERSION_NO_V:
+        sh: echo "{{.VERSION}}" | sed 's/^v//'
+      BASE_URL: https://github.com/vfarcic/dot-ai-cli/releases/download/{{.VERSION}}
+      SHA_DARWIN_ARM64:
+        sh: grep 'dot-ai-darwin-arm64$' dist/checksums.txt | awk '{print $1}'
+      SHA_DARWIN_AMD64:
+        sh: grep 'dot-ai-darwin-amd64$' dist/checksums.txt | awk '{print $1}'
+      SHA_LINUX_ARM64:
+        sh: grep 'dot-ai-linux-arm64$' dist/checksums.txt | awk '{print $1}'
+      SHA_LINUX_AMD64:
+        sh: grep 'dot-ai-linux-amd64$' dist/checksums.txt | awk '{print $1}'
+    cmds:
+      - |
+        cat > dist/dot-ai.rb << 'FORMULA'
+        class DotAi < Formula
+          desc "CLI for the dot-ai Kubernetes AI assistant"
+          homepage "https://github.com/vfarcic/dot-ai-cli"
+          version "{{.VERSION_NO_V}}"
+          license "MIT"
+
+          on_macos do
+            if Hardware::CPU.arm?
+              url "{{.BASE_URL}}/dot-ai-darwin-arm64"
+              sha256 "{{.SHA_DARWIN_ARM64}}"
+            else
+              url "{{.BASE_URL}}/dot-ai-darwin-amd64"
+              sha256 "{{.SHA_DARWIN_AMD64}}"
+            end
+          end
+
+          on_linux do
+            if Hardware::CPU.arm?
+              url "{{.BASE_URL}}/dot-ai-linux-arm64"
+              sha256 "{{.SHA_LINUX_ARM64}}"
+            else
+              url "{{.BASE_URL}}/dot-ai-linux-amd64"
+              sha256 "{{.SHA_LINUX_AMD64}}"
+            end
+          end
+
+          def install
+            bin.install Dir["dot-ai-*"].first => "dot-ai"
+          end
+
+          test do
+            assert_match "dot-ai", shell_output("#{bin}/dot-ai --help")
+          end
+        end
+        FORMULA
+        sed -i'' -e 's/^        //' dist/dot-ai.rb
+
+  homebrew-publish:
+    desc: Push Homebrew formula to the tap repository
+    requires:
+      vars: [VERSION, HOMEBREW_TAP_TOKEN]
+    cmds:
+      - |
+        TMPDIR=$(mktemp -d)
+        cd "$TMPDIR"
+        git clone "https://x-access-token:{{.HOMEBREW_TAP_TOKEN}}@github.com/vfarcic/homebrew-tap.git" .
+        mkdir -p Formula
+        cp {{.TASKFILE_DIR}}/dist/dot-ai.rb Formula/dot-ai.rb
+        git add Formula/dot-ai.rb
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git diff --cached --quiet || git commit -m "Update dot-ai formula to {{.VERSION}}"
+        git push origin main
+        rm -rf "$TMPDIR"
