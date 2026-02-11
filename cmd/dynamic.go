@@ -89,6 +89,9 @@ func registerCommands(root *cobra.Command, defs []openapi.CommandDef) {
 			parent = &cobra.Command{
 				Use:   d.Parent,
 				Short: strings.ToUpper(d.Parent[:1]) + d.Parent[1:] + " commands",
+				RunE: func(cmd *cobra.Command, args []string) error {
+					return cmd.Help()
+				},
 			}
 			topLevel[d.Parent] = parent
 			root.AddCommand(parent)
@@ -136,18 +139,13 @@ func buildCobraCommand(def openapi.CommandDef) *cobra.Command {
 
 			body, err := client.Do(GetConfig(), cmd.Annotations["method"], cmd.Annotations["path"], resolved)
 			if err != nil {
-				fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
-				if reqErr, ok := err.(*client.RequestError); ok {
-					os.Exit(reqErr.ExitCode)
-				}
-				os.Exit(client.ExitToolError)
+				return err
 			}
 
 			if len(body) > 0 {
 				formatted, fmtErr := formatter.Format(body, GetConfig().OutputFormat)
 				if fmtErr != nil {
-					fmt.Fprintln(cmd.ErrOrStderr(), fmtErr.Error())
-					os.Exit(client.ExitUsageError)
+					return fmtErr
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), formatted)
 			}
@@ -199,7 +197,7 @@ func splitParams(params []openapi.ParamDef) (positional, flags []openapi.ParamDe
 	promotedName := ""
 	var requiredStringBody []openapi.ParamDef
 	for _, p := range bodyParams {
-		if p.Required && p.Type == "string" && len(p.Enum) == 0 {
+		if openapi.IsPositionalCandidate(p.Required, p.Type, p.Enum) {
 			requiredStringBody = append(requiredStringBody, p)
 		}
 	}

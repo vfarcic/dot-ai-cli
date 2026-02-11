@@ -8,7 +8,7 @@ tasks:
   fetch-spec:
     desc: Fetch OpenAPI spec from the dot-ai server repo
     cmds:
-      - curl -sL {{.OPENAPI_URL}} -o openapi.json
+      - curl -sfL {{.OPENAPI_URL}} -o openapi.json
     generates:
       - openapi.json
 
@@ -53,6 +53,7 @@ tasks:
     desc: Run integration tests (starts mock server automatically)
     deps: [mock-up]
     cmds:
+      - defer: { task: mock-down }
       - go test -tags integration -v -count=1 ./...
 
   checksums:

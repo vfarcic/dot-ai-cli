@@ -9,12 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/vfarcic/dot-ai-cli/internal/config"
 )
 
-const defaultTimeout = 30 * time.Second
 
 // Exit code constants matching PRD spec.
 const (
@@ -92,8 +90,7 @@ func Do(cfg *config.Config, method, pathTemplate string, params []Param) ([]byte
 		bodyReader = bytes.NewReader([]byte("{}"))
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
+	ctx := context.Background()
 
 	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 	if err != nil {

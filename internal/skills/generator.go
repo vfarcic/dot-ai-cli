@@ -3,12 +3,14 @@ package skills
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/vfarcic/dot-ai-cli/internal/client"
 	"github.com/vfarcic/dot-ai-cli/internal/config"
+	"github.com/vfarcic/dot-ai-cli/internal/openapi"
 )
 
 // AgentDirs maps agent names to their skills directory paths.
@@ -179,7 +181,7 @@ func fetchPrompts(cfg *config.Config) ([]promptDef, error) {
 // renderPrompt attempts to fetch the rendered content of a prompt.
 // Returns nil if the render fails (e.g., required arguments missing).
 func renderPrompt(cfg *config.Config, name string) *promptRenderResponse {
-	body, err := client.Do(cfg, "POST", "/api/v1/prompts/"+name, nil)
+	body, err := client.Do(cfg, "POST", "/api/v1/prompts/"+url.PathEscape(name), nil)
 	if err != nil {
 		return nil
 	}
@@ -234,7 +236,7 @@ func writeToolSkill(dir string, t toolDef) error {
 	// Build usage line showing positional and flag params.
 	var positional, flags []paramDef
 	for _, p := range t.Parameters {
-		if p.Required && p.Type == "string" && len(p.Enum) == 0 {
+		if openapi.IsPositionalCandidate(p.Required, p.Type, p.Enum) {
 			positional = append(positional, p)
 		} else {
 			flags = append(flags, p)

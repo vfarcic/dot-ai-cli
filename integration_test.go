@@ -291,7 +291,7 @@ func TestCompletion_Bash_GeneratesScript(t *testing.T) {
 		t.Fatalf("expected exit 0, got error: %v", err)
 	}
 	if !strings.Contains(string(out), "bash completion") {
-		t.Errorf("expected bash completion script, got: %s", string(out)[:100])
+		t.Errorf("expected bash completion script, got: %s", string(out))
 	}
 }
 
@@ -302,7 +302,7 @@ func TestCompletion_Zsh_GeneratesScript(t *testing.T) {
 		t.Fatalf("expected exit 0, got error: %v", err)
 	}
 	if !strings.Contains(string(out), "compdef") {
-		t.Errorf("expected zsh compdef in script, got: %s", string(out)[:100])
+		t.Errorf("expected zsh compdef in script, got: %s", string(out))
 	}
 }
 
@@ -313,7 +313,7 @@ func TestCompletion_Fish_GeneratesScript(t *testing.T) {
 		t.Fatalf("expected exit 0, got error: %v", err)
 	}
 	if !strings.Contains(string(out), "complete") {
-		t.Errorf("expected fish complete commands, got: %s", string(out)[:100])
+		t.Errorf("expected fish complete commands, got: %s", string(out))
 	}
 }
 

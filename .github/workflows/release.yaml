@@ -28,9 +28,6 @@ jobs:
 
       - run: task test
 
-      - if: always()
-        run: task mock-down
-
   release:
     needs: test
     runs-on: ubuntu-latest
@@ -47,14 +44,20 @@ jobs:
 
       - name: Determine version
         id: version
+        env:
+          DISPATCH_VERSION: ${{ github.event.client_payload.version }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "tag=${{ github.event.client_payload.version }}" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "repository_dispatch" ]; then
+            echo "tag=${DISPATCH_VERSION}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
-      - run: task fetch-spec OPENAPI_REF=${{ steps.version.outputs.tag }}
+      - name: Fetch OpenAPI spec
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: task fetch-spec OPENAPI_REF="$TAG"
 
       - run: task build-all
 
@@ -74,6 +77,12 @@ jobs:
             dist/dot-ai-windows-amd64.exe
             dist/checksums.txt
 
-      - run: task homebrew-formula VERSION=${{ steps.version.outputs.tag }}
+      - name: Update Homebrew formula
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: task homebrew-formula VERSION="$TAG"
 
-      - run: task homebrew-publish VERSION=${{ steps.version.outputs.tag }} HOMEBREW_TAP_TOKEN=${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Publish Homebrew formula
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: task homebrew-publish VERSION="$TAG" HOMEBREW_TAP_TOKEN=${{ secrets.HOMEBREW_TAP_TOKEN }}

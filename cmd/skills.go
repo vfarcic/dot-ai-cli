@@ -2,12 +2,21 @@ package cmd
 
 import (
 	"fmt"
-	"os"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/vfarcic/dot-ai-cli/internal/client"
 	"github.com/vfarcic/dot-ai-cli/internal/skills"
 )
+
+func agentNames() []string {
+	names := make([]string, 0, len(skills.AgentDirs))
+	for k := range skills.AgentDirs {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
 
 var skillsAgent string
 var skillsPath string
@@ -34,7 +43,7 @@ and regenerates them.`,
 		}
 		if skillsAgent != "" && skillsPath == "" {
 			if _, ok := skills.AgentDirs[skillsAgent]; !ok {
-				return fmt.Errorf("invalid value %q for flag --agent: must be one of [claude-code, cursor, windsurf]", skillsAgent)
+				return fmt.Errorf("invalid value %q for flag --agent: must be one of [%s]", skillsAgent, strings.Join(agentNames(), ", "))
 			}
 		}
 		return nil
@@ -42,11 +51,7 @@ and regenerates them.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, RoutingSkill)
 		if err != nil {
-			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
-			if reqErr, ok := err.(*client.RequestError); ok {
-				os.Exit(reqErr.ExitCode)
-			}
-			os.Exit(client.ExitToolError)
+			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Skills generated successfully in %s\n", outDir)
 		return nil
@@ -54,10 +59,10 @@ and regenerates them.`,
 }
 
 func init() {
-	skillsGenerateCmd.Flags().StringVar(&skillsAgent, "agent", "", "Target agent: claude-code, cursor, windsurf")
+	skillsGenerateCmd.Flags().StringVar(&skillsAgent, "agent", "", "Target agent: "+strings.Join(agentNames(), ", "))
 	skillsGenerateCmd.Flags().StringVar(&skillsPath, "path", "", "Override output directory (for unsupported agents)")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"claude-code", "cursor", "windsurf"}, cobra.ShellCompDirectiveNoFileComp
+		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})
 
 	skillsCmd.AddCommand(skillsGenerateCmd)

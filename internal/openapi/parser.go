@@ -36,6 +36,14 @@ type CommandDef struct {
 	Params      []ParamDef
 }
 
+// IsPositionalCandidate reports whether a parameter qualifies for promotion
+// to a positional argument: required, string type, and no enum constraint.
+// Used by both CLI command registration and skills generation to keep the
+// promotion heuristic in sync.
+func IsPositionalCandidate(required bool, typ string, enum []string) bool {
+	return required && typ == "string" && len(enum) == 0
+}
+
 const pathPrefix = "/api/v1/"
 
 // excludedPaths lists API paths to omit from CLI command generation.

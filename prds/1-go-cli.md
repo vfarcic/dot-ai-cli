@@ -182,7 +182,7 @@ MCP     →  MCP Protocol           →  MCP Server
 ### Configuration precedence
 1. CLI flags: `--server-url`, `--token`, `--output`
 2. Environment variables: `DOT_AI_URL`, `DOT_AI_AUTH_TOKEN`, `DOT_AI_OUTPUT_FORMAT`
-3. Defaults: `http://localhost:3456`, no token, `text`
+3. Defaults: `http://localhost:3456`, no token, `yaml`
 
 ### Output formats
 - `yaml` (default): Human-readable YAML conversion of JSON responses. Handles any response shape generically without per-endpoint logic.

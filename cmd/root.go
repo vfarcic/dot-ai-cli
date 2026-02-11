@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -11,11 +12,12 @@ import (
 var cfg config.Config
 
 var rootCmd = &cobra.Command{
-	Use:   "dot-ai",
-	Short: "CLI for the DevOps AI Toolkit",
-	Long:  "Auto-generated CLI for the DevOps AI Toolkit REST API.\nTalk to your Kubernetes clusters using AI-powered tools.",
+	Use:          "dot-ai",
+	Short:        "CLI for the DevOps AI Toolkit",
+	Long:         "Auto-generated CLI for the DevOps AI Toolkit REST API.\nTalk to your Kubernetes clusters using AI-powered tools.",
+	SilenceUsage: true,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmd.Help()
+		_ = cmd.Help()
 	},
 }
 
@@ -26,6 +28,10 @@ func Execute(openapiSpec, routingSkill []byte) {
 	RegisterDynamicCommands(openapiSpec)
 
 	if err := rootCmd.Execute(); err != nil {
+		var reqErr *client.RequestError
+		if errors.As(err, &reqErr) {
+			os.Exit(reqErr.ExitCode)
+		}
 		os.Exit(client.ExitUsageError)
 	}
 }
