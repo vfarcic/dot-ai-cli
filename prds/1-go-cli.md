@@ -53,10 +53,11 @@ dot-ai manageOrgData --dataType pattern --operation list
 dot-ai query "test" --server-url http://remote:3456 --token mytoken --output json
 
 # Generate skills for coding agents (fetches prompts/tools from server)
-dot-ai skills generate --agent claude-code       # → .claude/skills/dot-ai/
-dot-ai skills generate --agent cursor            # → .cursor/skills/dot-ai/
+dot-ai skills generate --agent claude-code       # → .claude/skills/dot-ai-*/SKILL.md
+dot-ai skills generate --agent cursor            # → .cursor/skills/dot-ai-*/SKILL.md
+dot-ai skills generate --agent windsurf          # → .windsurf/skills/dot-ai-*/SKILL.md
 dot-ai skills generate --path ./custom/skills/   # → arbitrary path for unsupported agents
-# Re-running overwrites generated skills (update mechanism)
+# Re-running overwrites dot-ai-* skills (update mechanism)
 ```
 
 ## Architecture
@@ -148,6 +149,12 @@ MCP     →  MCP Protocol           →  MCP Server
 - `openapi` (`GET /api/v1/openapi`) — returns the OpenAPI spec which is already embedded in the binary. Internal/debug use only
 - `prompts` (`POST /api/v1/prompts/:promptName`) and `prompts-get` (`GET /api/v1/prompts`) — prompt functionality will be replaced by local skills generation (M13). The auto-generated names are also confusing (`prompts` is POST, `prompts-get` is the list)
 
+### Skills generation: open standard across agents
+- Claude Code, Cursor, and Windsurf all use the same skills format: `.<agent>/skills/<skill-name>/SKILL.md` with YAML frontmatter
+- Cursor also auto-discovers skills from `.claude/skills/` — Claude Code skills work in Cursor without duplication
+- No agent supports category subdirectories within skills (e.g., `.claude/skills/dot-ai/query/` doesn't work). Use a `dot-ai-` name prefix instead to namespace generated skills and avoid collisions with user-created skills
+- Agent output directories: claude-code → `.claude/skills/`, cursor → `.cursor/skills/`, windsurf → `.windsurf/skills/`
+
 ### Configuration precedence
 1. CLI flags: `--server-url`, `--token`, `--output`
 2. Environment variables: `DOT_AI_URL`, `DOT_AI_AUTH_TOKEN`, `DOT_AI_OUTPUT_FORMAT`
@@ -189,7 +196,7 @@ MCP     →  MCP Protocol           →  MCP Server
 - [x] **M7: Output formatters** — yaml (default, human-readable), json (raw passthrough). Dropped `text` as a separate format — yaml serves the human-readable role
 - [x] **M8: Multi-arch build** — Taskfile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
 - [x] **M12: Shell completion** — Bash, Zsh, and Fish completion scripts via cobra's built-in completion generation. Uses cobra's built-in `completion` command. Registered `RegisterFlagCompletionFunc` for all enum-constrained flags (dynamic) and global `--output` flag
-- [ ] **M13: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, etc.) and determines the output directory. `--path` flag overrides the directory for unsupported agents. Generated skills are placed in a `dot-ai/` subdirectory (e.g., `.claude/skills/dot-ai/`) to isolate them from user-created skills. Re-running overwrites the subdirectory as an update mechanism. Each skill wraps a CLI command so the agent gets native slash commands backed by the dot-ai server
+- [x] **M13: Skills generation** — `dot-ai skills generate` fetches prompts and tools from the server via REST API and scaffolds them as agent skills. `--agent` flag selects the target agent (claude-code, cursor, windsurf) and determines the output directory (`.claude/skills/`, `.cursor/skills/`, `.windsurf/skills/`). `--path` flag overrides the directory for unsupported agents. Generated skills use a `dot-ai-` name prefix (e.g., `.claude/skills/dot-ai-query/SKILL.md`) since agents don't support category subdirectories. Re-running deletes existing `dot-ai-*` skill folders and regenerates them (update mechanism). Each skill wraps a CLI command so the agent gets native slash commands backed by the dot-ai server
 - [ ] **M14: Interactive mode** — REPL for running multiple commands in a session without reconnecting
 - [ ] **M15: Streaming responses** — SSE support for long-running operations (remediate, recommend) to show progress in real time
 - [ ] **M11: Documentation** — Installation instructions, usage examples, AI agent integration guide
