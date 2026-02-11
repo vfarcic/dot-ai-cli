@@ -38,10 +38,7 @@ jobs:
             echo "tag=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Fetch OpenAPI spec
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: task fetch-spec OPENAPI_REF="$TAG"
+      - run: task fetch-spec
 
       - run: task test
 
