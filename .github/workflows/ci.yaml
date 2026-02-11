@@ -23,4 +23,6 @@ jobs:
         with:
           version: 3.x
 
+      - run: task fetch-spec
+
       - run: task test

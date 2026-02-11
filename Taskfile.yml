@@ -116,7 +116,7 @@ tasks:
           end
         end
         FORMULA
-        sed -i'' -e 's/^        //' dist/dot-ai.rb
+        sed -i.bak -e 's/^        //' dist/dot-ai.rb && rm -f dist/dot-ai.rb.bak
 
   homebrew-publish:
     desc: Push Homebrew formula to the tap repository
@@ -126,7 +126,7 @@ tasks:
       - |
         TMPDIR=$(mktemp -d)
         cd "$TMPDIR"
-        git clone "https://x-access-token:{{.HOMEBREW_TAP_TOKEN}}@github.com/vfarcic/homebrew-tap.git" .
+        git clone --quiet "https://x-access-token:{{.HOMEBREW_TAP_TOKEN}}@github.com/vfarcic/homebrew-tap.git" .
         mkdir -p Formula
         cp {{.TASKFILE_DIR}}/dist/dot-ai.rb Formula/dot-ai.rb
         git add Formula/dot-ai.rb

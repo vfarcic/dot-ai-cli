@@ -20,7 +20,11 @@ func TestMain(m *testing.M) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic("failed to build binary: " + string(out))
 	}
-	binaryPath = "./dot-ai-test"
+	abs, err := filepath.Abs("dot-ai-test")
+	if err != nil {
+		panic("failed to resolve binary path: " + err.Error())
+	}
+	binaryPath = abs
 
 	code := m.Run()
 
@@ -482,11 +486,11 @@ func TestSkillsGenerate_ToolSkillHasParameters(t *testing.T) {
 
 func TestSkillsGenerate_AgentClaudeCode(t *testing.T) {
 	dir := t.TempDir()
-	outDir := filepath.Join(dir, ".claude", "skills")
 	// Pre-create the parent so the test verifies the command creates the skills dir.
 	os.MkdirAll(filepath.Join(dir, ".claude"), 0o755)
 
-	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001", "skills", "generate", "--agent", "claude-code", "--path", outDir)
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001", "skills", "generate", "--agent", "claude-code")
+	cmd.Dir = dir
 	var outBuf, errBuf strings.Builder
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
@@ -500,6 +504,7 @@ func TestSkillsGenerate_AgentClaudeCode(t *testing.T) {
 	}
 
 	// Verify at least one skill was created in the claude-code skills dir.
+	outDir := filepath.Join(dir, ".claude", "skills")
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("failed to read output dir: %v", err)
