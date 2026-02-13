@@ -46,10 +46,10 @@ See [Skills Generation](guides/skills-generation.md) for what this does.
 
 ## Verify It Works
 
-Ask your agent to use the CLI:
+Ask your agent to use the dot-ai CLI:
 
 ```
-"Use the CLI to check the server version"
+"Use the dot-ai CLI to check the server version"
 ```
 
 Your agent should execute `dot-ai version` and show you the results. If this works, your agent is successfully using the CLI!
