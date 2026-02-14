@@ -1,5 +1,8 @@
 # PRD #1: Auto-Generated Go CLI
 
+**Status:** ✅ Complete
+**Completed:** 2026-02-13
+
 ## Problem Statement
 
 dot-ai currently only exposes its tools via MCP and REST API. There is a growing trend of AI agents preferring CLI tools over MCP servers due to better token efficiency (~33% improvement in benchmarks), simpler configuration (no per-client MCP setup), and composability (piping, scripting). Users in the Kubernetes ecosystem universally expect single-binary CLI tools — kubectl, helm, terraform, and gh are all self-contained binaries. Without a CLI, dot-ai requires either MCP configuration or raw HTTP calls, creating friction for both AI agents and human users.
