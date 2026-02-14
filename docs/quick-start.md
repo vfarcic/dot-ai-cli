@@ -4,7 +4,7 @@ Get your AI agent using the DevOps AI Toolkit CLI.
 
 ## Prerequisites
 
-- Running [DevOps AI Toolkit server](https://devopstoolkit.ai/docs/mcp/setup/mcp-setup)
+- Running [DevOps AI Toolkit server](https://devopstoolkit.ai/docs/ai-engine/setup/deployment)
 - AI coding assistant: Claude Code, Cursor, or Windsurf
 
 ## Install the CLI
@@ -56,7 +56,7 @@ Your agent should execute `dot-ai version` and show you the results. If this wor
 
 ## What's Next
 
-Your agent can now use all DevOps AI Toolkit capabilities via CLI. For details on what you can do, see the [server documentation](https://devopstoolkit.ai/docs/mcp/).
+Your agent can now use all DevOps AI Toolkit capabilities via CLI. For details on what you can do, see the [server documentation](https://devopstoolkit.ai/docs/ai-engine/).
 
 **CLI-specific topics:**
 - **[Commands Overview](guides/cli-commands-overview.md)** — How to discover and use commands

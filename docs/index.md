@@ -4,7 +4,7 @@
 
 ## What is the CLI?
 
-The CLI provides command-line access to all [DevOps AI Toolkit](https://devopstoolkit.ai/docs/mcp/) capabilities. It's a lightweight HTTP client designed for both AI agents and human operators who prefer terminal-based workflows.
+The CLI provides command-line access to all [DevOps AI Toolkit](https://devopstoolkit.ai/docs/ai-engine/) capabilities. It's a lightweight HTTP client designed for both AI agents and human operators who prefer terminal-based workflows.
 
 Unlike MCP (limited to 8 high-level tools to minimize context window usage), the CLI exposes **all REST API endpoints** since there's no token cost per command. This means you get access to direct resource queries, logs, events, and more—all from a single binary with zero runtime dependencies.
 
@@ -25,7 +25,7 @@ The CLI is ideal for:
 - **Direct API access** — Commands for resources, logs, events, namespaces not available via MCP
 - **Composability** — Pipe output between commands, combine with other CLI tools
 
-For details on DevOps AI Toolkit features (query, recommend, remediate, etc.), see the [main documentation](https://devopstoolkit.ai/docs/mcp/).
+For details on DevOps AI Toolkit features (query, recommend, remediate, etc.), see the [main documentation](https://devopstoolkit.ai/docs/ai-engine/).
 
 ## Getting Started
 
@@ -65,6 +65,6 @@ The CLI is a stateless HTTP client that reads the embedded OpenAPI spec and gene
 
 ## Related Projects
 
-- **[DevOps AI Toolkit](https://devopstoolkit.ai/docs/mcp/)** — Main server (MCP + REST API)
+- **[DevOps AI Toolkit](https://devopstoolkit.ai/docs/ai-engine/)** — Main server (MCP + REST API)
 - **[Web UI](https://devopstoolkit.ai/docs/ui/)** — Visualizations and dashboards
 - **[Stack](https://devopstoolkit.ai/docs/stack/)** — Kubernetes deployment

@@ -16,7 +16,7 @@ To see help for a specific command:
 dot-ai <command> --help
 ```
 
-For details on what each feature does, see the [server documentation](https://devopstoolkit.ai/docs/mcp/).
+For details on what each feature does, see the [server documentation](https://devopstoolkit.ai/docs/ai-engine/).
 
 ## Global Flags
 
@@ -56,4 +56,4 @@ dot-ai <command> --output json | jq '.result'
 - **[Skills Generation](skills-generation.md)** — Enable AI agents to use the CLI
 - **[Output Formats](output-formats.md)** — YAML vs JSON
 - **[Automation](automation.md)** — Use in scripts and CI/CD
-- **[Server Features](https://devopstoolkit.ai/docs/mcp/)** — What each command does
+- **[Server Features](https://devopstoolkit.ai/docs/ai-engine/)** — What each command does

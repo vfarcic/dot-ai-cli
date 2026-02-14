@@ -4,7 +4,7 @@ Install the DevOps AI Toolkit CLI on your preferred platform.
 
 ## Prerequisites
 
-- Access to a running [DevOps AI Toolkit server](https://devopstoolkit.ai/docs/mcp/setup/mcp-setup)
+- Access to a running [DevOps AI Toolkit server](https://devopstoolkit.ai/docs/ai-engine/setup/deployment)
 
 ## Homebrew (macOS/Linux)
 
