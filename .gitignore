@@ -1,6 +1,6 @@
 # Binaries
 dot-ai
-dot-ai-*
+/dot-ai-*
 *.exe
 
 # Go
