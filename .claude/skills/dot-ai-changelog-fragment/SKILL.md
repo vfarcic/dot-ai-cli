@@ -65,8 +65,8 @@ Create file: `changelog.d/[issue-id].[type].md`
 **Documentation links:**
 If the PRD includes documentation updates, link to the relevant page on devopstoolkit.ai. The URL pattern is:
 - `https://devopstoolkit.ai/docs/{project}/{path}`
-- Where `{project}` is: `ai-engine` (dot-ai), `controller` (dot-ai-controller), `ui` (dot-ai-ui), or `stack` (dot-ai-stack)
-- And `{path}` maps from the docs folder (e.g., `docs/ai-engine/tools/recommend.md` → `tools/recommend`)
+- Where `{project}` is: `mcp` (dot-ai), `controller` (dot-ai-controller), `ui` (dot-ai-ui), or `stack` (dot-ai-stack)
+- And `{path}` maps from the docs folder (e.g., `docs/guides/mcp-recommendation-guide.md` → `guides/mcp-recommendation-guide`)
 
 **Example: `changelog.d/142.feature.md`**
 ```markdown
@@ -78,7 +78,7 @@ The `query` tool now accepts a `--cluster` flag to target specific clusters, and
 
 Configure additional clusters by adding kubeconfig contexts to `ADDITIONAL_KUBECONFIGS` (comma-separated paths). Each context becomes available as a cluster target. The default cluster remains the current kubeconfig context when no `--cluster` flag is specified.
 
-See the [Multi-Cluster Setup Guide](https://devopstoolkit.ai/docs/ai-engine/setup/multi-cluster-setup) for configuration details and examples.
+See the [Multi-Cluster Setup Guide](https://devopstoolkit.ai/docs/mcp/setup/multi-cluster-setup) for configuration details and examples.
 ```
 
 ### Step 5: Confirm Creation

@@ -20,6 +20,7 @@ func agentNames() []string {
 
 var skillsAgent string
 var skillsPath string
+var skillsInstallHook bool
 
 var skillsCmd = &cobra.Command{
 	Use:   "skills",
@@ -46,6 +47,14 @@ and regenerates them.`,
 				return fmt.Errorf("invalid value %q for flag --agent: must be one of [%s]", skillsAgent, strings.Join(agentNames(), ", "))
 			}
 		}
+		if skillsInstallHook {
+			if skillsAgent != "claude-code" {
+				return fmt.Errorf("--install-hook requires --agent claude-code")
+			}
+			if skillsPath != "" {
+				return fmt.Errorf("--install-hook cannot be used with --path")
+			}
+		}
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -54,6 +63,12 @@ and regenerates them.`,
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Skills generated successfully in %s\n", outDir)
+		if skillsInstallHook {
+			if err := skills.InstallSessionHook(); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "SessionStart hook installed in %s\n", ".claude/settings.json")
+		}
 		return nil
 	},
 }
@@ -61,6 +76,7 @@ and regenerates them.`,
 func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsAgent, "agent", "", "Target agent: "+strings.Join(agentNames(), ", "))
 	skillsGenerateCmd.Flags().StringVar(&skillsPath, "path", "", "Override output directory (for unsupported agents)")
+	skillsGenerateCmd.Flags().BoolVar(&skillsInstallHook, "install-hook", false, "Install a Claude Code SessionStart hook to regenerate skills on startup (requires --agent claude-code)")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})

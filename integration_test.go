@@ -681,6 +681,183 @@ func TestSkillsGenerate_AgentCompletion(t *testing.T) {
 	}
 }
 
+func TestSkillsGenerate_InstallHook_CreatesSettingsJSON(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0o755)
+
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "claude-code", "--install-hook")
+	cmd.Dir = dir
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	if err != nil {
+		exitCode := 0
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, errBuf.String())
+	}
+
+	if !strings.Contains(outBuf.String(), "SessionStart hook installed") {
+		t.Errorf("expected hook installation message, got: %s", outBuf.String())
+	}
+
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("expected settings.json to exist: %v", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("settings.json is not valid JSON: %v", err)
+	}
+
+	hooks := settings["hooks"].(map[string]any)
+	sessionStart := hooks["SessionStart"].([]any)
+	if len(sessionStart) != 1 {
+		t.Fatalf("expected 1 SessionStart entry, got %d", len(sessionStart))
+	}
+	entry := sessionStart[0].(map[string]any)
+	if entry["matcher"] != "startup" {
+		t.Errorf("expected matcher 'startup', got %v", entry["matcher"])
+	}
+	innerHooks := entry["hooks"].([]any)
+	if len(innerHooks) != 1 {
+		t.Fatalf("expected 1 inner hook, got %d", len(innerHooks))
+	}
+	hook := innerHooks[0].(map[string]any)
+	if hook["type"] != "command" {
+		t.Errorf("expected hook type 'command', got %v", hook["type"])
+	}
+	if hook["command"] != "dot-ai skills generate --agent claude-code" {
+		t.Errorf("expected hook command, got %v", hook["command"])
+	}
+}
+
+func TestSkillsGenerate_InstallHook_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0o755)
+
+	for i := 0; i < 2; i++ {
+		cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+			"skills", "generate", "--agent", "claude-code", "--install-hook")
+		cmd.Dir = dir
+		var errBuf strings.Builder
+		cmd.Stderr = &errBuf
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("run %d: expected exit 0; stderr: %s", i+1, errBuf.String())
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("expected settings.json: %v", err)
+	}
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+	hooks := settings["hooks"].(map[string]any)
+	sessionStart := hooks["SessionStart"].([]any)
+	if len(sessionStart) != 1 {
+		t.Errorf("expected exactly 1 SessionStart entry after two runs, got %d", len(sessionStart))
+	}
+}
+
+func TestSkillsGenerate_InstallHook_MergesExistingSettings(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0o755)
+
+	existing := map[string]any{
+		"permissions": map[string]any{
+			"allow": []any{"Bash(git status:*)"},
+		},
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": ".*",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "echo pre-tool",
+						},
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), data, 0o644)
+
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "claude-code", "--install-hook")
+	cmd.Dir = dir
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("expected exit 0; stderr: %s", errBuf.String())
+	}
+
+	data, _ = os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+
+	if settings["permissions"] == nil {
+		t.Error("expected permissions to be preserved")
+	}
+
+	hooks := settings["hooks"].(map[string]any)
+	if hooks["PreToolUse"] == nil {
+		t.Error("expected PreToolUse hook to be preserved")
+	}
+
+	sessionStart := hooks["SessionStart"].([]any)
+	if len(sessionStart) != 1 {
+		t.Errorf("expected 1 SessionStart entry, got %d", len(sessionStart))
+	}
+}
+
+func TestSkillsGenerate_InstallHook_RequiresClaudeCode(t *testing.T) {
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "cursor", "--install-hook")
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected error when --install-hook used with non-claude-code agent")
+	}
+	if !strings.Contains(errBuf.String(), "--install-hook requires --agent claude-code") {
+		t.Errorf("expected specific error message, got: %s", errBuf.String())
+	}
+}
+
+func TestSkillsGenerate_InstallHook_IncompatibleWithPath(t *testing.T) {
+	dir := t.TempDir()
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "claude-code", "--path", dir, "--install-hook")
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected error when --install-hook used with --path")
+	}
+	if !strings.Contains(errBuf.String(), "--install-hook cannot be used with --path") {
+		t.Errorf("expected specific error message, got: %s", errBuf.String())
+	}
+}
+
+func TestSkillsGenerate_InstallHook_InHelp(t *testing.T) {
+	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	if !strings.Contains(string(out), "--install-hook") {
+		t.Error("expected help to mention --install-hook flag")
+	}
+}
+
 func TestHelp_ShowsSkillsCommand(t *testing.T) {
 	cmd := exec.Command(binaryPath, "--help")
 	out, err := cmd.Output()
