@@ -52,8 +52,6 @@ var excludedPaths = map[string]bool{
 	"/api/v1/tools/{toolName}": true, // generic tool execution; duplicates promoted commands
 	"/api/v1/tools":            true, // tool discovery; internal/debug only
 	"/api/v1/openapi":          true, // returns spec already embedded in binary
-	"/api/v1/prompts/{promptName}": true, // replaced by skills generation (M13)
-	"/api/v1/prompts":              true, // replaced by skills generation (M13)
 }
 
 // Parse parses an OpenAPI 3.0 JSON spec and returns CLI command definitions.
