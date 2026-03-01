@@ -23,7 +23,8 @@ var rootCmd = &cobra.Command{
 
 var RoutingSkill []byte
 
-func Execute(openapiSpec, routingSkill []byte) {
+func Execute(openapiSpec, routingSkill []byte, version string) {
+	rootCmd.Version = version
 	RoutingSkill = routingSkill
 	RegisterDynamicCommands(openapiSpec)
 

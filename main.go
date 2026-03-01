@@ -6,6 +6,8 @@ import (
 	"github.com/vfarcic/dot-ai-cli/cmd"
 )
 
+var version = "dev"
+
 //go:embed openapi.json
 var openapiSpec []byte
 
@@ -13,5 +15,5 @@ var openapiSpec []byte
 var routingSkill []byte
 
 func main() {
-	cmd.Execute(openapiSpec, routingSkill)
+	cmd.Execute(openapiSpec, routingSkill, version)
 }

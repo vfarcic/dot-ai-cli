@@ -20,9 +20,6 @@ var openapiSpec []byte
 func RegisterDynamicCommands(spec []byte) {
 	openapiSpec = spec
 
-	// Set CLI version from the OpenAPI spec's info.version field.
-	rootCmd.Version = specVersion(spec)
-
 	defs, err := openapi.Parse(spec)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to parse OpenAPI spec: %v\n", err)
@@ -30,22 +27,6 @@ func RegisterDynamicCommands(spec []byte) {
 	}
 
 	registerCommands(rootCmd, defs)
-}
-
-// specVersion extracts the info.version field from an OpenAPI spec.
-func specVersion(spec []byte) string {
-	var s struct {
-		Info struct {
-			Version string `json:"version"`
-		} `json:"info"`
-	}
-	if err := json.Unmarshal(spec, &s); err != nil {
-		return "unknown"
-	}
-	if s.Info.Version == "" {
-		return "unknown"
-	}
-	return s.Info.Version
 }
 
 // paramInfo stores parameter metadata in command annotations for use

@@ -36,7 +36,7 @@ tasks:
     desc: Build binary for current platform
     cmds:
       - mkdir -p dist
-      - CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/dot-ai-{{OS}}-{{ARCH}} .
+      - CGO_ENABLED=0 go build -ldflags="-s -w -X main.version={{.VERSION | default "dev"}}" -o dist/dot-ai-{{OS}}-{{ARCH}} .
 
   build-all:
     desc: Cross-compile binaries for all supported platforms
@@ -46,8 +46,8 @@ tasks:
           matrix:
             GOOS: [linux, darwin]
             GOARCH: [amd64, arm64]
-        cmd: GOOS={{.ITEM.GOOS}} GOARCH={{.ITEM.GOARCH}} CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/dot-ai-{{.ITEM.GOOS}}-{{.ITEM.GOARCH}} .
-      - GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/dot-ai-windows-amd64.exe .
+        cmd: GOOS={{.ITEM.GOOS}} GOARCH={{.ITEM.GOARCH}} CGO_ENABLED=0 go build -ldflags="-s -w -X main.version={{.VERSION | default "dev"}}" -o dist/dot-ai-{{.ITEM.GOOS}}-{{.ITEM.GOARCH}} .
+      - GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version={{.VERSION | default "dev"}}" -o dist/dot-ai-windows-amd64.exe .
 
   test:
     desc: Run integration tests (starts mock server automatically)

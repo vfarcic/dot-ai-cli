@@ -42,7 +42,7 @@ jobs:
 
       - run: task test
 
-      - run: task build-all
+      - run: task build-all VERSION=${{ steps.version.outputs.tag }}
 
       - run: task checksums
 
