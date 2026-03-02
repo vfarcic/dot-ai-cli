@@ -19,7 +19,7 @@ prd_title="${2:-}"
 # --- Resolve PRD title if not provided ---
 
 if [ -z "$prd_title" ]; then
-  prd_file=$(find prds/ -maxdepth 1 -name "${prd_number}-*.md" 2>/dev/null | head -1)
+  prd_file=$(find prds/ -maxdepth 1 -name "${prd_number}-*.md" -print -quit 2>/dev/null || true)
   if [ -z "$prd_file" ]; then
     echo "ERROR=true"
     echo "MESSAGE=No PRD file found matching prds/${prd_number}-*.md"
@@ -77,7 +77,14 @@ fi
 
 # --- Create worktree ---
 
-output=$(git worktree add "${worktree_path}" -b "${branch_name}" main 2>&1)
+if ! output=$(git worktree add "${worktree_path}" -b "${branch_name}" main 2>&1); then
+  echo "ERROR=true"
+  echo "BRANCH_NAME=${branch_name}"
+  echo "WORKTREE_PATH=${worktree_path}"
+  echo "ERRORS:"
+  echo "  ${output}"
+  exit 0
+fi
 
 echo "SUCCESS=true"
 echo "BRANCH_NAME=${branch_name}"

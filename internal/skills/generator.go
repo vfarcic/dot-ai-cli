@@ -334,45 +334,55 @@ func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse) e
 		}
 	}
 
-	// Rewrite relative file references in SKILL.md to use full paths
-	// from the project root. Authors write relative paths (e.g.,
-	// "bash analyze.sh" or "bash ./analyze.sh") and the generator
-	// rewrites them to the actual skill directory path, which depends
-	// on the --agent flag and the dot-ai- prefix.
-	content := b.String()
-	if rendered != nil && len(rendered.Data.Files) > 0 {
-		var pairs []string
-		for _, f := range rendered.Data.Files {
-			fullPath := filepath.Join(skillDir, f.Path)
-			pairs = append(pairs, "./"+f.Path, fullPath)
-			pairs = append(pairs, f.Path, fullPath)
-		}
-		content = strings.NewReplacer(pairs...).Replace(content)
+	// Phase 1: Validate and decode all supporting files before writing
+	// anything to disk. This prevents partial artifacts if a file has
+	// an invalid path or bad base64.
+	type decodedFile struct {
+		path string
+		data []byte
 	}
-
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
-		return err
-	}
-
+	var decoded []decodedFile
 	if rendered != nil {
 		for _, f := range rendered.Data.Files {
 			cleanPath := filepath.Clean(f.Path)
 			if strings.HasPrefix(cleanPath, "..") || filepath.IsAbs(cleanPath) {
 				return fmt.Errorf("invalid file path %q: path traversal not allowed", f.Path)
 			}
-			decoded, err := base64.StdEncoding.DecodeString(f.Content)
+			data, err := base64.StdEncoding.DecodeString(f.Content)
 			if err != nil {
 				return fmt.Errorf("decoding file %s: %w", f.Path, err)
 			}
-			target := filepath.Join(skillDir, cleanPath)
-			if dir := filepath.Dir(target); dir != skillDir {
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return err
-				}
-			}
-			if err := os.WriteFile(target, decoded, 0o755); err != nil {
+			decoded = append(decoded, decodedFile{path: cleanPath, data: data})
+		}
+	}
+
+	// Phase 2: Rewrite relative file references in SKILL.md to full paths.
+	// Authors write relative paths (e.g., "bash analyze.sh") and the
+	// generator rewrites them based on --agent flag and dot-ai- prefix.
+	content := b.String()
+	if len(decoded) > 0 {
+		var pairs []string
+		for _, f := range decoded {
+			fullPath := filepath.Join(skillDir, f.path)
+			pairs = append(pairs, "./"+f.path, fullPath)
+			pairs = append(pairs, f.path, fullPath)
+		}
+		content = strings.NewReplacer(pairs...).Replace(content)
+	}
+
+	// Phase 3: Write all files to disk.
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		return err
+	}
+	for _, f := range decoded {
+		target := filepath.Join(skillDir, f.path)
+		if dir := filepath.Dir(target); dir != skillDir {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return err
 			}
+		}
+		if err := os.WriteFile(target, f.data, 0o755); err != nil {
+			return err
 		}
 	}
 

@@ -321,3 +321,34 @@ func TestWritePromptSkill_InvalidBase64(t *testing.T) {
 		t.Fatal("expected error for invalid base64, got nil")
 	}
 }
+
+func TestWritePromptSkill_PathTraversalRejected(t *testing.T) {
+	dir := t.TempDir()
+	p := promptDef{Name: "bad-path", Description: "Invalid path"}
+	rendered := &promptRenderResponse{Success: true}
+	rendered.Data.Messages = []promptMsg{
+		{Role: "user", Content: struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}{Type: "text", Text: "x"}},
+	}
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"relative traversal", "../escape.sh"},
+		{"absolute path", "/etc/passwd"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered.Data.Files = []promptFile{
+				{Path: tc.path, Content: base64.StdEncoding.EncodeToString([]byte("echo nope"))},
+			}
+			err := writePromptSkill(dir, p, rendered)
+			if err == nil || !strings.Contains(err.Error(), "path traversal") {
+				t.Fatalf("expected path traversal error, got %v", err)
+			}
+		})
+	}
+}

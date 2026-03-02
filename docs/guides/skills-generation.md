@@ -147,20 +147,20 @@ Deploy the application to {{environment}}.
 
 When your skill's `SKILL.md` references supporting files, **always use relative paths** — either bare (`analyze.sh`) or dot-prefixed (`./analyze.sh`):
 
-```markdown
+~~~markdown
 Run the analysis:
 ```bash
 bash analyze.sh
 ```
-```
+~~~
 
 During generation, the CLI automatically rewrites these to the correct full path based on the target agent and directory structure. For example, with `--agent claude-code`, the above becomes:
 
-```markdown
+~~~markdown
 ```bash
 bash .claude/skills/dot-ai-my-skill/analyze.sh
 ```
-```
+~~~
 
 **Do not hardcode full paths** like `.claude/skills/my-skill/analyze.sh` in your source skill files. The final path depends on:
 - The **agent** (`--agent claude-code` → `.claude/skills/`, `--agent cursor` → `.cursor/skills/`)
