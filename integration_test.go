@@ -465,6 +465,64 @@ func TestSkillsGenerate_PromptRenderedContent(t *testing.T) {
 	}
 }
 
+func TestSkillsGenerate_WritesSupportingFiles(t *testing.T) {
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	// The mock returns files[] alongside messages for all prompts.
+	// Use troubleshoot-pod as the representative prompt skill.
+	skillDir := filepath.Join(dir, "dot-ai-troubleshoot-pod")
+
+	// Flat supporting file must exist with correct decoded content.
+	scriptPath := filepath.Join(skillDir, "troubleshoot.sh")
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("expected supporting file troubleshoot.sh to exist: %v", err)
+	}
+	if !strings.Contains(string(scriptContent), "#!/bin/bash") {
+		t.Errorf("expected script to contain shebang, got: %s", string(scriptContent))
+	}
+	if !strings.Contains(string(scriptContent), "kubectl get pod") {
+		t.Errorf("expected script to contain kubectl command, got: %s", string(scriptContent))
+	}
+
+	// Supporting file must have executable permissions.
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Errorf("expected permissions 0755, got %o", info.Mode().Perm())
+	}
+
+	// Nested path must create intermediate directories.
+	nestedPath := filepath.Join(skillDir, "templates", "pod-debug.yaml")
+	nestedContent, err := os.ReadFile(nestedPath)
+	if err != nil {
+		t.Fatalf("expected nested file templates/pod-debug.yaml to exist: %v", err)
+	}
+	if !strings.Contains(string(nestedContent), "kind: Pod") {
+		t.Errorf("expected YAML to contain 'kind: Pod', got: %s", string(nestedContent))
+	}
+
+	// Nested file must also have executable permissions.
+	ninfo, err := os.Stat(nestedPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if ninfo.Mode().Perm() != 0o755 {
+		t.Errorf("expected permissions 0755 on nested file, got %o", ninfo.Mode().Perm())
+	}
+
+	// SKILL.md must still exist alongside supporting files.
+	if _, err := os.Stat(filepath.Join(skillDir, "SKILL.md")); err != nil {
+		t.Fatalf("expected SKILL.md to still exist: %v", err)
+	}
+}
+
 func TestSkillsGenerate_ToolSkillHasParameters(t *testing.T) {
 	dir := t.TempDir()
 	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir)

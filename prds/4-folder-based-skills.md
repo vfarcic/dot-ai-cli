@@ -1,6 +1,6 @@
 # PRD #4: Folder-Based Skills — Write Supporting Files
 
-**Status:** Pending
+**Status:** Complete
 **Related Issue:** [dot-ai #387](https://github.com/vfarcic/dot-ai/issues/387) (server-side, complete)
 
 ## Problem Statement
@@ -96,9 +96,9 @@ Decided in the server-side PRD (#387). Supporting files may contain binary conte
 - [x] **M2: Write supporting files to disk** — After writing `SKILL.md` in `writePromptSkill`, iterate over `Files`, base64-decode each, create subdirectories for nested paths, and write to the skill folder. All files get `0o644` initially
 - [x] **M3: Executable permissions for supporting files** — All supporting files are written with `0o755` permissions. No heuristic detection needed — supporting files exist to be invoked by SKILL.md, so executable permission is the correct default
 - [x] **M4: Update PRD to reflect simplified permission model** — Replace heuristic-based Technical Decisions (extension detection, shebang checking) and Success Criteria (items 3-4) with the actual approach: all supporting files get `0o755`. Remove the permission detection false positives risk
-- [ ] **M5: Integration tests** — Test `writePromptSkill` with supporting files (including nested paths). Verify files are decoded from base64, written with correct content and `0o755` permissions. Verify prompts without files still work
+- [x] **M5: Integration tests** — Unit tests for `writePromptSkill` covering flat files, nested paths, permissions, backward compatibility, multiple files, and invalid base64. Integration test `TestSkillsGenerate_WritesSupportingFiles` validates end-to-end flow against mock server with `files[]` fixture
 
-> **Implementation order**: M1 → M2 → M3 → M4 → M5. M1–M4 complete. M5 (integration tests) validates the full flow.
+> **Implementation order**: M1 → M2 → M3 → M4 → M5. All milestones complete.
 
 ## Risks & Mitigations
 
@@ -111,4 +111,4 @@ Decided in the server-side PRD (#387). Supporting files may contain binary conte
 ## Dependencies
 
 - `dot-ai` server PRD #387 — complete. REST API already returns `files[]`
-- `dot-ai-mock-server` — needs updated fixtures for folder-based skill responses (can be done as part of M5)
+- `dot-ai-mock-server` — complete. Fixture updated with `files[]` field, image published to `ghcr.io/vfarcic/dot-ai-mock-server:latest`
