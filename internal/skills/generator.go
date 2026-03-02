@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -326,7 +327,29 @@ func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse) e
 		}
 	}
 
-	return os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(b.String()), 0o644)
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(b.String()), 0o644); err != nil {
+		return err
+	}
+
+	if rendered != nil {
+		for _, f := range rendered.Data.Files {
+			decoded, err := base64.StdEncoding.DecodeString(f.Content)
+			if err != nil {
+				return fmt.Errorf("decoding file %s: %w", f.Path, err)
+			}
+			target := filepath.Join(skillDir, f.Path)
+			if dir := filepath.Dir(target); dir != skillDir {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return err
+				}
+			}
+			if err := os.WriteFile(target, decoded, 0o644); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func writeRoutingSkill(dir string, content []byte) error {
