@@ -62,12 +62,20 @@ type argDef struct {
 	Required    bool   `json:"required"`
 }
 
+// promptFile represents a supporting file returned by the server, with
+// base64-encoded content.
+type promptFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"` // base64-encoded
+}
+
 // promptRenderResponse matches the POST /api/v1/prompts/{name} response.
 type promptRenderResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
 		Description string       `json:"description"`
 		Messages    []promptMsg  `json:"messages"`
+		Files       []promptFile `json:"files"`
 	} `json:"data"`
 }
 

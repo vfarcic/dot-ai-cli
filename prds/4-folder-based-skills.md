@@ -106,7 +106,7 @@ Decided in the server-side PRD (#387). Supporting files may contain binary conte
 
 ## Milestones
 
-- [ ] **M1: Unmarshal files from response** — Add `promptFile` struct and `Files` field to `promptRenderResponse`. No behavior change yet, just parse the field from JSON. Verify existing tests still pass (the field is optional, so backward-compatible)
+- [x] **M1: Unmarshal files from response** — Add `promptFile` struct and `Files` field to `promptRenderResponse`. No behavior change yet, just parse the field from JSON. Verify existing tests still pass (the field is optional, so backward-compatible)
 - [ ] **M2: Write supporting files to disk** — After writing `SKILL.md` in `writePromptSkill`, iterate over `Files`, base64-decode each, create subdirectories for nested paths, and write to the skill folder. All files get `0o644` initially
 - [ ] **M3: Executable permission detection** — After writing each file, check extension (`.sh`, `.bash`) and shebang (`#!` prefix on decoded bytes). Set `0o755` for matches. Add `isExecutable(path string, content []byte) bool` helper
 - [ ] **M4: Integration tests** — Add test fixtures to the mock server for a folder-based skill with supporting files (including a `.sh` script and a nested path). Test that `skills generate` writes all files with correct content and permissions
