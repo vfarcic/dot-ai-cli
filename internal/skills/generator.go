@@ -343,7 +343,7 @@ func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse) e
 					return err
 				}
 			}
-			if err := os.WriteFile(target, decoded, 0o644); err != nil {
+			if err := os.WriteFile(target, decoded, 0o755); err != nil {
 				return err
 			}
 		}

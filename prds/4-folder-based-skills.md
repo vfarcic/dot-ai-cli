@@ -19,7 +19,7 @@ Supporting files like `create-worktree.sh` are silently dropped. The generated s
 
 ## Solution Overview
 
-Extend `writePromptSkill` to decode and write supporting files from the `files[]` response field. Detect executable scripts and set appropriate file permissions.
+Extend `writePromptSkill` to decode and write supporting files from the `files[]` response field. All supporting files get `0o755` permissions.
 
 ```
 Server: POST /api/v1/prompts/worktree-prd
@@ -65,30 +65,17 @@ In `writePromptSkill`, after writing `SKILL.md`:
 2. For each file:
    a. Base64-decode `Content`
    b. Create subdirectories if `Path` contains `/` (e.g., `templates/deployment.yaml`)
-   c. Detect if file is executable (see permission rules below)
-   d. Write with `os.WriteFile` using `0o755` (executable) or `0o644` (regular)
+   c. Write with `os.WriteFile` using `0o755`
 
-### Executable Permission Detection
+### File Permissions
 
-A file gets `0o755` permissions if **any** of these are true:
-- **Extension**: `.sh`, `.bash`
-- **Shebang**: Decoded content starts with `#!` (first two bytes)
-
-This covers shell scripts regardless of extension (e.g., `bootstrap` with `#!/bin/bash`) and standard script extensions even without shebangs. Detection happens after base64 decoding on the raw bytes.
+All supporting files are written with `0o755` permissions. Supporting files exist to be invoked by `SKILL.md` (shell scripts, executables), so executable permission is the safe and correct default. No heuristic detection is needed.
 
 ## Technical Decisions
 
-### Why detect permissions client-side instead of server-side?
+### Why `0o755` for all supporting files instead of detecting permissions?
 
-The server serves raw file content without tracking permissions. This is the right boundary — the server doesn't know what OS or filesystem the client runs on. The CLI is the first consumer that writes files to disk, so it owns permission semantics. If a future Web UI needs different behavior, it makes its own decisions.
-
-### Why only `.sh` and `.bash` extensions?
-
-These are the only extensions called out in the parent PRD (#387). Python, Ruby, and other script extensions are best handled by their interpreters (`python script.py` works without execute permission). Shell scripts are unique in that they're typically invoked directly (`./script.sh`) and require execute permission.
-
-### Why check shebang in addition to extension?
-
-Skill authors may use extensionless scripts (e.g., `bootstrap`, `setup`) which are common in the Unix ecosystem. Checking for `#!` as the first two bytes catches these reliably with zero false positives — no non-script file starts with `#!`.
+Supporting files exist to be invoked by `SKILL.md` — they're shell scripts, executables, or templates that skills reference directly. Making all of them executable is the safe default: a non-script file with execute permission is harmless, but a script without it breaks at runtime. This eliminates the need for heuristic detection (extension matching, shebang parsing) and the edge cases that come with it.
 
 ### Why base64 instead of raw text?
 
@@ -98,20 +85,20 @@ Decided in the server-side PRD (#387). Supporting files may contain binary conte
 
 1. `skills generate` writes supporting files alongside `SKILL.md` for folder-based skills
 2. Base64 content is correctly decoded to original file bytes
-3. Shell scripts (`.sh`, `.bash`, or shebang `#!`) get `0o755` permissions
-4. Non-script files get `0o644` permissions
-5. Nested paths (e.g., `templates/deployment.yaml`) create intermediate directories
-6. Prompts without `files[]` (flat prompts, tool skills) continue to work identically
-7. Integration tests validate file writing, permissions, and nested paths
+3. All supporting files get `0o755` permissions
+4. Nested paths (e.g., `templates/deployment.yaml`) create intermediate directories
+5. Prompts without `files[]` (flat prompts, tool skills) continue to work identically
+6. Integration tests validate file writing, permissions, and nested paths
 
 ## Milestones
 
 - [x] **M1: Unmarshal files from response** — Add `promptFile` struct and `Files` field to `promptRenderResponse`. No behavior change yet, just parse the field from JSON. Verify existing tests still pass (the field is optional, so backward-compatible)
 - [x] **M2: Write supporting files to disk** — After writing `SKILL.md` in `writePromptSkill`, iterate over `Files`, base64-decode each, create subdirectories for nested paths, and write to the skill folder. All files get `0o644` initially
-- [ ] **M3: Executable permission detection** — After writing each file, check extension (`.sh`, `.bash`) and shebang (`#!` prefix on decoded bytes). Set `0o755` for matches. Add `isExecutable(path string, content []byte) bool` helper
-- [ ] **M4: Integration tests** — Add test fixtures to the mock server for a folder-based skill with supporting files (including a `.sh` script and a nested path). Test that `skills generate` writes all files with correct content and permissions
+- [x] **M3: Executable permissions for supporting files** — All supporting files are written with `0o755` permissions. No heuristic detection needed — supporting files exist to be invoked by SKILL.md, so executable permission is the correct default
+- [x] **M4: Update PRD to reflect simplified permission model** — Replace heuristic-based Technical Decisions (extension detection, shebang checking) and Success Criteria (items 3-4) with the actual approach: all supporting files get `0o755`. Remove the permission detection false positives risk
+- [ ] **M5: Integration tests** — Test `writePromptSkill` with supporting files (including nested paths). Verify files are decoded from base64, written with correct content and `0o755` permissions. Verify prompts without files still work
 
-> **Implementation order**: M1 → M2 → M3 → M4. Each milestone builds on the previous. M1 is pure struct change with no risk. M2 adds the core file writing. M3 layers on permission detection. M4 validates the full flow against the mock server.
+> **Implementation order**: M1 → M2 → M3 → M4 → M5. M1–M4 complete. M5 (integration tests) validates the full flow.
 
 ## Risks & Mitigations
 
@@ -119,9 +106,9 @@ Decided in the server-side PRD (#387). Supporting files may contain binary conte
 |------|------------|
 | Mock server doesn't return `files[]` for test prompts | Add test fixtures to `dot-ai-mock-server` with folder-based skill responses. Publish updated mock image |
 | Large base64 files cause memory issues | Server already enforces 5 MB per-file limit. CLI can trust this — no additional limit needed |
-| Permission detection false positives | Shebang check is `#!` as first 2 bytes — virtually zero false positives. Extension check is an exact match on `.sh`/`.bash` only |
+| Unnecessary execute permission on non-script files | Harmless — execute permission on a YAML template or text file has no side effects, while missing execute permission on a script breaks it at runtime |
 
 ## Dependencies
 
 - `dot-ai` server PRD #387 — complete. REST API already returns `files[]`
-- `dot-ai-mock-server` — needs updated fixtures for folder-based skill responses (can be done as part of M4)
+- `dot-ai-mock-server` — needs updated fixtures for folder-based skill responses (can be done as part of M5)
