@@ -21,6 +21,7 @@ func agentNames() []string {
 var skillsAgent string
 var skillsPath string
 var skillsInstallHook bool
+var skillsPullLatest bool
 
 var skillsCmd = &cobra.Command{
 	Use:   "skills",
@@ -58,6 +59,12 @@ and regenerates them.`,
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if skillsPullLatest {
+			if err := skills.RefreshPrompts(GetConfig()); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Server skills cache refreshed")
+		}
 		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, RoutingSkill)
 		if err != nil {
 			return err
@@ -77,6 +84,7 @@ func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsAgent, "agent", "", "Target agent: "+strings.Join(agentNames(), ", "))
 	skillsGenerateCmd.Flags().StringVar(&skillsPath, "path", "", "Override output directory (for unsupported agents)")
 	skillsGenerateCmd.Flags().BoolVar(&skillsInstallHook, "install-hook", false, "Install a Claude Code SessionStart hook to regenerate skills on startup (requires --agent claude-code)")
+	skillsGenerateCmd.Flags().BoolVar(&skillsPullLatest, "pull-latest", false, "Force the server to pull the latest skills from the git repository before generating")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})

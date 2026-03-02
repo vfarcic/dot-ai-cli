@@ -24,3 +24,5 @@ tmp/
 
 # Fetched artifacts
 openapi.json
+
+/.env

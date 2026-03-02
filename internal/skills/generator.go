@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -62,12 +63,20 @@ type argDef struct {
 	Required    bool   `json:"required"`
 }
 
+// promptFile represents a supporting file returned by the server, with
+// base64-encoded content.
+type promptFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"` // base64-encoded
+}
+
 // promptRenderResponse matches the POST /api/v1/prompts/{name} response.
 type promptRenderResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
 		Description string       `json:"description"`
 		Messages    []promptMsg  `json:"messages"`
+		Files       []promptFile `json:"files"`
 	} `json:"data"`
 }
 
@@ -77,6 +86,13 @@ type promptMsg struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+}
+
+// RefreshPrompts asks the server to pull the latest prompts from the
+// configured git repository, busting the server-side cache.
+func RefreshPrompts(cfg *config.Config) error {
+	_, err := client.Do(cfg, "POST", "/api/v1/prompts/refresh", nil)
+	return err
 }
 
 // Generate fetches tools and prompts from the server and writes SKILL.md
@@ -318,7 +334,59 @@ func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse) e
 		}
 	}
 
-	return os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(b.String()), 0o644)
+	// Phase 1: Validate and decode all supporting files before writing
+	// anything to disk. This prevents partial artifacts if a file has
+	// an invalid path or bad base64.
+	type decodedFile struct {
+		path string
+		data []byte
+	}
+	var decoded []decodedFile
+	if rendered != nil {
+		for _, f := range rendered.Data.Files {
+			cleanPath := filepath.Clean(f.Path)
+			if strings.HasPrefix(cleanPath, "..") || filepath.IsAbs(cleanPath) {
+				return fmt.Errorf("invalid file path %q: path traversal not allowed", f.Path)
+			}
+			data, err := base64.StdEncoding.DecodeString(f.Content)
+			if err != nil {
+				return fmt.Errorf("decoding file %s: %w", f.Path, err)
+			}
+			decoded = append(decoded, decodedFile{path: cleanPath, data: data})
+		}
+	}
+
+	// Phase 2: Rewrite relative file references in SKILL.md to full paths.
+	// Authors write relative paths (e.g., "bash analyze.sh") and the
+	// generator rewrites them based on --agent flag and dot-ai- prefix.
+	content := b.String()
+	if len(decoded) > 0 {
+		var pairs []string
+		for _, f := range decoded {
+			fullPath := filepath.Join(skillDir, f.path)
+			pairs = append(pairs, "./"+f.path, fullPath)
+			pairs = append(pairs, f.path, fullPath)
+		}
+		content = strings.NewReplacer(pairs...).Replace(content)
+	}
+
+	// Phase 3: Write all files to disk.
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		return err
+	}
+	for _, f := range decoded {
+		target := filepath.Join(skillDir, f.path)
+		if dir := filepath.Dir(target); dir != skillDir {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		if err := os.WriteFile(target, f.data, 0o755); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func writeRoutingSkill(dir string, content []byte) error {
