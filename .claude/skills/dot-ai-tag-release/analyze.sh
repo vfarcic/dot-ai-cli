@@ -27,14 +27,22 @@ fi
 
 # --- Get current version ---
 
-current_version=$(git tag --sort=-v:refname 2>/dev/null | head -1)
+current_version=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname 2>/dev/null | head -1)
 if [ -z "$current_version" ]; then
   current_version="v0.0.0"
 fi
 
-# Strip leading 'v' for arithmetic
+# Validate and parse semver with regex
 version="${current_version#v}"
-IFS='.' read -r major minor patch <<< "$version"
+if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[2]}"
+  patch="${BASH_REMATCH[3]}"
+else
+  echo "ERROR=true"
+  echo "MESSAGE=Current tag '${current_version}' is not valid semver. Cannot determine version."
+  exit 0
+fi
 
 # --- Analyze fragment types ---
 

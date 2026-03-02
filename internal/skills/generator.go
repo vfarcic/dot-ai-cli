@@ -334,17 +334,37 @@ func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse) e
 		}
 	}
 
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(b.String()), 0o644); err != nil {
+	// Rewrite relative file references in SKILL.md to use full paths
+	// from the project root. Authors write relative paths (e.g.,
+	// "bash analyze.sh" or "bash ./analyze.sh") and the generator
+	// rewrites them to the actual skill directory path, which depends
+	// on the --agent flag and the dot-ai- prefix.
+	content := b.String()
+	if rendered != nil && len(rendered.Data.Files) > 0 {
+		var pairs []string
+		for _, f := range rendered.Data.Files {
+			fullPath := filepath.Join(skillDir, f.Path)
+			pairs = append(pairs, "./"+f.Path, fullPath)
+			pairs = append(pairs, f.Path, fullPath)
+		}
+		content = strings.NewReplacer(pairs...).Replace(content)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
 		return err
 	}
 
 	if rendered != nil {
 		for _, f := range rendered.Data.Files {
+			cleanPath := filepath.Clean(f.Path)
+			if strings.HasPrefix(cleanPath, "..") || filepath.IsAbs(cleanPath) {
+				return fmt.Errorf("invalid file path %q: path traversal not allowed", f.Path)
+			}
 			decoded, err := base64.StdEncoding.DecodeString(f.Content)
 			if err != nil {
 				return fmt.Errorf("decoding file %s: %w", f.Path, err)
 			}
-			target := filepath.Join(skillDir, f.Path)
+			target := filepath.Join(skillDir, cleanPath)
 			if dir := filepath.Dir(target); dir != skillDir {
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return err

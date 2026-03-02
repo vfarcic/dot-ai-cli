@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -46,13 +48,15 @@ func TestWritePromptSkill_SupportingFiles(t *testing.T) {
 		t.Errorf("expected %q, got %q", scriptContent, string(content))
 	}
 
-	// Supporting file must have 0o755 permissions.
-	info, err := os.Stat(filePath)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if info.Mode().Perm() != 0o755 {
-		t.Errorf("expected permissions 0755, got %o", info.Mode().Perm())
+	// Supporting file must have 0o755 permissions (Unix only).
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filePath)
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Errorf("expected permissions 0755, got %o", info.Mode().Perm())
+		}
 	}
 }
 
@@ -99,10 +103,15 @@ func TestWritePromptSkill_NestedPath(t *testing.T) {
 		t.Errorf("expected %q, got %q", yamlContent, string(content))
 	}
 
-	// Nested file must have 0o755 permissions.
-	finfo, _ := os.Stat(filePath)
-	if finfo.Mode().Perm() != 0o755 {
-		t.Errorf("expected permissions 0755, got %o", finfo.Mode().Perm())
+	// Nested file must have 0o755 permissions (Unix only).
+	if runtime.GOOS != "windows" {
+		finfo, err := os.Stat(filePath)
+		if err != nil {
+			t.Fatalf("stat nested file: %v", err)
+		}
+		if finfo.Mode().Perm() != 0o755 {
+			t.Errorf("expected permissions 0755, got %o", finfo.Mode().Perm())
+		}
 	}
 }
 
@@ -209,6 +218,87 @@ func TestWritePromptSkill_MultipleFiles(t *testing.T) {
 			t.Errorf("file %s: expected %q, got %q", f.Path, string(decoded), string(content))
 		}
 	}
+}
+
+func TestWritePromptSkill_RewritesFileReferences(t *testing.T) {
+	dir := t.TempDir()
+	scriptContent := "#!/bin/bash\necho hello"
+
+	p := promptDef{Name: "my-skill", Description: "Skill with file refs"}
+	rendered := &promptRenderResponse{Success: true}
+	rendered.Data.Messages = []promptMsg{
+		{Role: "user", Content: struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}{Type: "text", Text: "Run:\n```bash\nbash ./run.sh\n```\nOr:\n```bash\nbash run.sh\n```\n"}},
+	}
+	rendered.Data.Files = []promptFile{
+		{
+			Path:    "run.sh",
+			Content: base64.StdEncoding.EncodeToString([]byte(scriptContent)),
+		},
+	}
+
+	if err := writePromptSkill(dir, p, rendered); err != nil {
+		t.Fatalf("writePromptSkill: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "dot-ai-my-skill", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+
+	expected := filepath.Join(dir, "dot-ai-my-skill", "run.sh")
+	text := string(content)
+
+	// ./run.sh should be rewritten to full path.
+	if !contains(text, "bash "+expected) {
+		t.Errorf("expected ./run.sh to be rewritten to %s in SKILL.md:\n%s", expected, text)
+	}
+
+	// No bare "run.sh" should remain (both forms rewritten).
+	// Count occurrences of the full path — should be 2 (one for each code block).
+	count := strings.Count(text, expected)
+	if count != 2 {
+		t.Errorf("expected 2 occurrences of full path, got %d in:\n%s", count, text)
+	}
+}
+
+func TestWritePromptSkill_RewritesNestedFileReferences(t *testing.T) {
+	dir := t.TempDir()
+
+	p := promptDef{Name: "nested-ref", Description: "Nested file refs"}
+	rendered := &promptRenderResponse{Success: true}
+	rendered.Data.Messages = []promptMsg{
+		{Role: "user", Content: struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}{Type: "text", Text: "Apply:\n```bash\nkubectl apply -f templates/deploy.yaml\n```\n"}},
+	}
+	rendered.Data.Files = []promptFile{
+		{
+			Path:    "templates/deploy.yaml",
+			Content: base64.StdEncoding.EncodeToString([]byte("apiVersion: v1")),
+		},
+	}
+
+	if err := writePromptSkill(dir, p, rendered); err != nil {
+		t.Fatalf("writePromptSkill: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "dot-ai-nested-ref", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+
+	expected := filepath.Join(dir, "dot-ai-nested-ref", "templates", "deploy.yaml")
+	if !contains(string(content), expected) {
+		t.Errorf("expected templates/deploy.yaml to be rewritten to %s in:\n%s", expected, string(content))
+	}
+}
+
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }
 
 func TestWritePromptSkill_InvalidBase64(t *testing.T) {

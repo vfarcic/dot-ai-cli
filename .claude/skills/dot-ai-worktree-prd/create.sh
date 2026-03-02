@@ -25,9 +25,10 @@ if [ -z "$prd_title" ]; then
     echo "MESSAGE=No PRD file found matching prds/${prd_number}-*.md"
     exit 0
   fi
-  # Extract title from first line: "# PRD #123: Some Title"
+  # Extract title from first heading line.
+  # Handles: "# PRD #123: Title", "## PRD #123 - Title", "# Title"
   first_line=$(head -1 "$prd_file")
-  prd_title=$(echo "$first_line" | sed 's/^#.*: //')
+  prd_title=$(echo "$first_line" | sed -E 's/^#+ *(PRD *#?[0-9]+ *[:\-] *)?//')
 fi
 
 # --- Generate branch name ---
@@ -59,7 +60,7 @@ if [ -d "$worktree_path" ]; then
   errors+=("Worktree path '${worktree_path}' already exists")
 fi
 
-if git worktree list 2>/dev/null | grep -q "${branch_name}"; then
+if git worktree list --porcelain 2>/dev/null | grep -q "^branch refs/heads/${branch_name}$"; then
   errors+=("Worktree for '${branch_name}' is already registered")
 fi
 

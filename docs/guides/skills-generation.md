@@ -93,7 +93,7 @@ The generated skills include both built-in skills that ship with the server and 
 
 Each skill is a directory containing `SKILL.md` and optionally supporting files — shell scripts, templates, manifests, or other resources the skill references:
 
-```
+```text
 .claude/skills/dot-ai-worktree-prd/
 ├── SKILL.md
 ├── create-worktree.sh
@@ -111,7 +111,7 @@ You can serve your own skills alongside the built-in ones by organizing them in 
 
 Skills can be defined as single markdown files or as directories with `SKILL.md` and optional supporting files:
 
-```
+```text
 my-team-skills/
 ├── deploy-app.md                    # Single-file skill
 ├── worktree-prd/                    # Skill with supporting files
@@ -142,6 +142,31 @@ arguments:
 
 Deploy the application to {{environment}}.
 ```
+
+### Referencing Supporting Files
+
+When your skill's `SKILL.md` references supporting files, **always use relative paths** — either bare (`analyze.sh`) or dot-prefixed (`./analyze.sh`):
+
+```markdown
+Run the analysis:
+```bash
+bash analyze.sh
+```
+```
+
+During generation, the CLI automatically rewrites these to the correct full path based on the target agent and directory structure. For example, with `--agent claude-code`, the above becomes:
+
+```markdown
+```bash
+bash .claude/skills/dot-ai-my-skill/analyze.sh
+```
+```
+
+**Do not hardcode full paths** like `.claude/skills/my-skill/analyze.sh` in your source skill files. The final path depends on:
+- The **agent** (`--agent claude-code` → `.claude/skills/`, `--agent cursor` → `.cursor/skills/`)
+- The **`dot-ai-` prefix** added during generation
+
+The rewrite applies to all files listed in the skill's supporting files. Nested paths work too — `templates/deploy.yaml` becomes `.claude/skills/dot-ai-my-skill/templates/deploy.yaml`.
 
 ### Server Configuration
 
