@@ -36,6 +36,12 @@ Note: Cursor also auto-discovers skills from `.claude/skills/`, so Claude Code s
 
 ## Generate Skills
 
+The server caches skills for performance (default: 24 hours). Use `--pull-latest` to force the server to pull the latest from the git repository before generating:
+
+```bash
+dot-ai skills generate --agent claude-code --pull-latest
+```
+
 **For Claude Code:**
 ```bash
 dot-ai skills generate --agent claude-code

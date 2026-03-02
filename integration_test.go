@@ -905,6 +905,17 @@ func TestSkillsGenerate_InstallHook_IncompatibleWithPath(t *testing.T) {
 	}
 }
 
+func TestSkillsGenerate_PullLatest_InHelp(t *testing.T) {
+	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	if !strings.Contains(string(out), "--pull-latest") {
+		t.Error("expected help to mention --pull-latest flag")
+	}
+}
+
 func TestSkillsGenerate_InstallHook_InHelp(t *testing.T) {
 	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
 	out, err := cmd.Output()

@@ -88,6 +88,13 @@ type promptMsg struct {
 	} `json:"content"`
 }
 
+// RefreshPrompts asks the server to pull the latest prompts from the
+// configured git repository, busting the server-side cache.
+func RefreshPrompts(cfg *config.Config) error {
+	_, err := client.Do(cfg, "POST", "/api/v1/prompts/refresh", nil)
+	return err
+}
+
 // Generate fetches tools and prompts from the server and writes SKILL.md
 // files to the resolved output directory. Returns the output directory used.
 // routingSkill is the embedded routing skill content to write as dot-ai/SKILL.md.
