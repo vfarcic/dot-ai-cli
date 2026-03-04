@@ -54,8 +54,8 @@ dot-ai users create --email bob@example.com --password "..."
 dot-ai users list
 dot-ai users delete --email bob@example.com
 
-# Auth precedence: --token flag > stored OAuth token > DOT_AI_AUTH_TOKEN env
-dot-ai query "what pods are running?"          # Uses stored OAuth token
+# Auth precedence: --token flag > DOT_AI_AUTH_TOKEN env > credentials.json auth_token > OAuth token
+dot-ai query "what pods are running?"          # Uses stored OAuth or static token
 dot-ai query "what pods are running?" --token x # Overrides with static token
 ```
 
@@ -75,12 +75,28 @@ The CLI implements the OAuth Authorization Code flow with PKCE (same flow MCP cl
 
 **Note:** The CLI registers as a dynamic OAuth client via the server's `/register` endpoint (RFC 7591) before starting the flow.
 
-### Token Storage
+### Persistent Configuration: Two-File Split
+
+The CLI uses two files under `~/.config/dot-ai/` to separate durable settings from auth state:
+
+#### `~/.config/dot-ai/settings.json` — Durable Configuration
 
 ```json
-// ~/.config/dot-ai/credentials.json
 {
   "server_url": "https://dot-ai.example.com",
+  "output_format": "yaml"
+}
+```
+
+- Persistent alternative to env vars and flags for `server_url` and `output_format`
+- File permissions: `0600` (owner read/write only)
+- Never modified by `auth login` or `auth logout`
+
+#### `~/.config/dot-ai/credentials.json` — All Auth State
+
+```json
+{
+  "auth_token": "static-bearer-token",
   "access_token": "eyJhbG...",
   "token_type": "Bearer",
   "expires_at": "2026-03-03T15:00:00Z",
@@ -89,17 +105,35 @@ The CLI implements the OAuth Authorization Code flow with PKCE (same flow MCP cl
 }
 ```
 
+- `auth_token`: static bearer token (alternative to `--token` / `DOT_AI_AUTH_TOKEN`)
+- `access_token`, `token_type`, `expires_at`, `client_id`, `client_secret`: OAuth session state written by `auth login`
 - File permissions: `0600` (owner read/write only)
-- One credential set per server URL (supports multiple servers)
+- `auth logout` clears only OAuth fields (`access_token`, `token_type`, `expires_at`, `client_id`, `client_secret`) — leaves `auth_token` intact
 - Token refresh: if expired, prompt user to re-authenticate (`dot-ai auth login`)
+- `server_url` is NOT stored here — it lives only in `settings.json`
 
-### Auth Precedence
+### Configuration Precedence
 
-The CLI resolves authentication in this order:
-1. `--token` flag (static token, highest priority)
-2. Stored OAuth token from `~/.config/dot-ai/credentials.json` (if valid and not expired)
-3. `DOT_AI_AUTH_TOKEN` environment variable (static token fallback)
-4. No authentication (for unauthenticated local development)
+The CLI resolves each configuration value independently:
+
+**Server URL:**
+1. `--server-url` flag (highest priority)
+2. `DOT_AI_URL` environment variable
+3. `settings.json` → `server_url`
+4. Default: `http://localhost:3456`
+
+**Authentication Token:**
+1. `--token` flag (highest priority)
+2. `DOT_AI_AUTH_TOKEN` environment variable
+3. `credentials.json` → `auth_token` (static token)
+4. `credentials.json` → `access_token` (OAuth, if valid and not expired)
+5. No authentication
+
+**Output Format:**
+1. `--output` flag (highest priority)
+2. `DOT_AI_OUTPUT_FORMAT` environment variable
+3. `settings.json` → `output_format`
+4. Default: `yaml`
 
 ### Auto-Generated User Management Commands
 
@@ -115,24 +149,51 @@ These commands work with both OAuth and static token auth.
 
 ## Milestones
 
-### Milestone 1: Auth Commands (login/logout/status)
+### Milestone 1: Persistent Configuration (settings.json + credentials.json)
 
-- [ ] Implement `dot-ai auth login` — dynamic client registration, PKCE flow, browser open, local callback server, token storage
-- [ ] Implement `dot-ai auth logout` — clear stored credentials for current server
+- [ ] Implement `internal/auth/settings.go` — Load/Save `~/.config/dot-ai/settings.json` (`server_url`, `output_format`) with `0600` permissions
+- [ ] Implement `internal/auth/credentials.go` — Load/Save/ClearOAuth `~/.config/dot-ai/credentials.json` (`auth_token`, OAuth fields) with `0600` permissions
+- [ ] Update `internal/config/config.go` — new precedence: flags > env > settings.json/credentials.json > defaults
+- [ ] Unit tests for settings load/save, credentials load/save/clear, and updated precedence
+
+### Milestone 2: Auth Commands (login/logout/status)
+
+- [ ] Implement `dot-ai auth login` — dynamic client registration, PKCE flow, browser open, local callback server, token storage to credentials.json
+- [ ] Implement `dot-ai auth logout` — clear only OAuth fields from credentials.json (leave `auth_token` intact)
 - [ ] Implement `dot-ai auth status` — show current auth mode, user identity, token expiry
-- [ ] Update `internal/client/client.go` — auth precedence (flag > stored OAuth > env var)
-- [ ] Token storage in `~/.config/dot-ai/credentials.json` with `0600` permissions
 - [ ] Integration tests for auth commands
 
-### Milestone 2: Documentation
+### Milestone 3: Manual Testing
+
+- [ ] Deploy dot-ai server with Dex enabled to a test cluster
+- [ ] Verify `settings.json` precedence: set `server_url` in settings.json, confirm CLI uses it without `--server-url` or `DOT_AI_URL`
+- [ ] Verify `credentials.json` static token: set `auth_token`, confirm CLI authenticates without `--token` or `DOT_AI_AUTH_TOKEN`
+- [ ] Verify flag/env overrides: confirm `--token` and `DOT_AI_AUTH_TOKEN` take priority over file-based values
+- [ ] Run `dot-ai auth login` — confirm browser opens, Dex login completes, token stored in `credentials.json`
+- [ ] Run `dot-ai auth status` — confirm it shows OAuth user identity and token expiry
+- [ ] Run authenticated commands (`dot-ai query`, `dot-ai users list`) using stored OAuth token
+- [ ] Run `dot-ai auth logout` — confirm OAuth fields cleared, `auth_token` preserved if set
+- [ ] Verify expired token handling: confirm CLI prompts to re-authenticate
+
+### Milestone 4: Documentation
 
 - [ ] New `docs/setup/authentication.md` — OAuth login flow, static token, auth precedence, troubleshooting
 - [ ] New `docs/guides/user-management.md` — create/list/delete users via CLI, when to use static users vs IdP connectors
-- [ ] Update `docs/setup/configuration.md` — add OAuth credential storage, auth precedence section
+- [ ] Update `docs/setup/configuration.md` — add settings.json, credentials.json, auth precedence section
 
-### Milestone 3: Feature Request to dot-ai
+### Milestone 5: Feature Request to dot-ai
 
 - [ ] Send feature request to `dot-ai` project: update `docs/ai-engine/setup/authentication.md` to link to CLI-specific user management page (`https://devopstoolkit.ai/docs/cli/guides/user-management`)
+
+## Design Decisions
+
+| # | Decision | Date | Rationale |
+|---|----------|------|-----------|
+| 1 | Split config into `settings.json` (durable config) and `credentials.json` (auth state) | 2026-03-03 | OAuth session state is ephemeral (login creates, logout clears) while server URL and output format are persistent user preferences. Mixing them in one file creates awkward logout semantics. |
+| 2 | `server_url` lives only in `settings.json`, not in `credentials.json` | 2026-03-03 | The CLI resolves server URL from the standard precedence chain. OAuth tokens are validated against the resolved URL at use time. If the user changes servers, they re-authenticate — correct behavior. |
+| 3 | Static `auth_token` lives in `credentials.json`, not `settings.json` | 2026-03-03 | A bearer token is a credential, not a setting. All auth state belongs together in `credentials.json`. |
+| 4 | `auth logout` clears only OAuth fields, not `auth_token` | 2026-03-03 | The user sets `auth_token` deliberately as a static credential. Logout should only clear the OAuth session, not destroy unrelated auth config. |
+| 5 | New precedence: flags > env vars > settings.json/credentials.json > defaults | 2026-03-03 | `settings.json` and `credentials.json` provide a persistent alternative to env vars, reducing the need for shell configuration. Existing flag and env var behavior is unchanged. |
 
 ## Dependencies
 
