@@ -151,10 +151,10 @@ These commands work with both OAuth and static token auth.
 
 ### Milestone 1: Persistent Configuration (settings.json + credentials.json)
 
-- [ ] Implement `internal/auth/settings.go` — Load/Save `~/.config/dot-ai/settings.json` (`server_url`, `output_format`) with `0600` permissions
-- [ ] Implement `internal/auth/credentials.go` — Load/Save/ClearOAuth `~/.config/dot-ai/credentials.json` (`auth_token`, OAuth fields) with `0600` permissions
-- [ ] Update `internal/config/config.go` — new precedence: flags > env > settings.json/credentials.json > defaults
-- [ ] Unit tests for settings load/save, credentials load/save/clear, and updated precedence
+- [x] Implement `internal/auth/settings.go` — Load/Save `~/.config/dot-ai/settings.json` (`server_url`, `output_format`) with `0600` permissions
+- [x] Implement `internal/auth/credentials.go` — Load/Save/ClearOAuth `~/.config/dot-ai/credentials.json` (`auth_token`, OAuth fields) with `0600` permissions
+- [x] Update `internal/config/config.go` — new precedence: flags > env > settings.json/credentials.json > defaults
+- [x] Unit tests for settings load/save, credentials load/save/clear, and updated precedence
 
 ### Milestone 2: Auth Commands (login/logout/status)
 
