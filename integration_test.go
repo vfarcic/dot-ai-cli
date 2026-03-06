@@ -1197,3 +1197,52 @@ func TestHelp_ShowsAuthCommand(t *testing.T) {
 		t.Error("expected root help to list auth command")
 	}
 }
+
+// --- User management commands (method-grouped subcommands) ---
+
+func TestUsers_List(t *testing.T) {
+	stdout, _, exitCode := runCLI(t, "users", "list", "--output", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "admin@dot-ai.local") {
+		t.Errorf("expected admin user in output, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "alice@example.com") {
+		t.Errorf("expected alice user in output, got: %s", stdout)
+	}
+}
+
+func TestUsers_Create(t *testing.T) {
+	stdout, _, exitCode := runCLI(t, "users", "create", "--email", "test@example.com", "--password", "securepass", "--output", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "User created successfully") {
+		t.Errorf("expected success message, got: %s", stdout)
+	}
+}
+
+func TestUsers_Delete(t *testing.T) {
+	stdout, _, exitCode := runCLI(t, "users", "delete", "bob@example.com", "--output", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "User deleted successfully") {
+		t.Errorf("expected success message, got: %s", stdout)
+	}
+}
+
+func TestUsersHelp_ShowsSubcommands(t *testing.T) {
+	cmd := exec.Command(binaryPath, "users", "--help")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	stdout := string(out)
+	for _, sub := range []string{"list", "create", "delete"} {
+		if !strings.Contains(stdout, sub) {
+			t.Errorf("expected users help to list %q subcommand, got: %s", sub, stdout)
+		}
+	}
+}

@@ -1,6 +1,6 @@
 # PRD #6: OAuth Authentication & User Management Commands
 
-**Status:** Draft
+**Status:** In Progress
 **Priority:** High
 **GitHub Issue:** [#6](https://github.com/vfarcic/dot-ai-cli/issues/6)
 **Created:** 2026-03-03
@@ -163,25 +163,32 @@ These commands work with both OAuth and static token auth.
 - [x] Implement `dot-ai auth status` — show current auth mode, user identity, token expiry
 - [x] Integration tests for auth commands
 
-### Milestone 3: Manual Testing
+### Milestone 3: Generic REST Subcommand Grouping
 
-- [ ] Deploy dot-ai server with Dex enabled to a test cluster
-- [ ] Verify `settings.json` precedence: set `server_url` in settings.json, confirm CLI uses it without `--server-url` or `DOT_AI_URL`
-- [ ] Verify `credentials.json` static token: set `auth_token`, confirm CLI authenticates without `--token` or `DOT_AI_AUTH_TOKEN`
-- [ ] Verify flag/env overrides: confirm `--token` and `DOT_AI_AUTH_TOKEN` take priority over file-based values
-- [ ] Run `dot-ai auth login` — confirm browser opens, Dex login completes, token stored in `credentials.json`
-- [ ] Run `dot-ai auth status` — confirm it shows OAuth user identity and token expiry
-- [ ] Run authenticated commands (`dot-ai query`, `dot-ai users list`) using stored OAuth token
-- [ ] Run `dot-ai auth logout` — confirm OAuth fields cleared, `auth_token` preserved if set
-- [ ] Verify expired token handling: confirm CLI prompts to re-authenticate
+- [x] Update `cmd/dynamic.go` `registerCommands` — detect top-level name collisions and group them as subcommands with friendly method-derived names
+- [x] Method mapping: GET→`list` (or `get` with path param), POST→`create`, DELETE→`delete`, PUT→`update`, PATCH→`patch`
+- [x] For DELETE with path param (e.g., `/users/{email}`), register as `users delete <email>` subcommand
+- [x] Integration tests for `users list`, `users create`, `users delete`
 
-### Milestone 4: Documentation
+### Milestone 4: Manual Testing
+
+- [x] Deploy dot-ai server with Dex enabled to a test cluster
+- [x] Verify `settings.json` precedence: set `server_url` in settings.json, confirm CLI uses it without `--server-url` or `DOT_AI_URL`
+- [x] Verify `credentials.json` static token: set `auth_token`, confirm CLI authenticates without `--token` or `DOT_AI_AUTH_TOKEN`
+- [x] Verify flag/env overrides: confirm `--token` and `DOT_AI_AUTH_TOKEN` take priority over file-based values
+- [x] Run `dot-ai auth login` — confirm browser opens, Dex login completes, token stored in `credentials.json`
+- [x] Run `dot-ai auth status` — confirm it shows OAuth user identity and token expiry
+- [x] Run authenticated commands (`dot-ai query`, `dot-ai users list`) using stored OAuth token
+- [x] Run `dot-ai auth logout` — confirm OAuth fields cleared, `auth_token` preserved if set
+- [x] Verify expired token handling: confirm CLI prompts to re-authenticate
+
+### Milestone 5: Documentation
 
 - [ ] New `docs/setup/authentication.md` — OAuth login flow, static token, auth precedence, troubleshooting
 - [ ] New `docs/guides/user-management.md` — create/list/delete users via CLI, when to use static users vs IdP connectors
 - [ ] Update `docs/setup/configuration.md` — add settings.json, credentials.json, auth precedence section
 
-### Milestone 5: Feature Request to dot-ai
+### Milestone 6: Feature Request to dot-ai
 
 - [ ] Send feature request to `dot-ai` project: update `docs/ai-engine/setup/authentication.md` to link to CLI-specific user management page (`https://devopstoolkit.ai/docs/cli/guides/user-management`)
 
@@ -194,6 +201,7 @@ These commands work with both OAuth and static token auth.
 | 3 | Static `auth_token` lives in `credentials.json`, not `settings.json` | 2026-03-03 | A bearer token is a credential, not a setting. All auth state belongs together in `credentials.json`. |
 | 4 | `auth logout` clears only OAuth fields, not `auth_token` | 2026-03-03 | The user sets `auth_token` deliberately as a static credential. Logout should only clear the OAuth session, not destroy unrelated auth config. |
 | 5 | New precedence: flags > env vars > settings.json/credentials.json > defaults | 2026-03-03 | `settings.json` and `credentials.json` provide a persistent alternative to env vars, reducing the need for shell configuration. Existing flag and env var behavior is unchanged. |
+| 6 | Generic REST method-to-subcommand grouping for multi-method paths | 2026-03-06 | When multiple HTTP methods exist on the same path (e.g., GET+POST `/users`), group them as subcommands (`users list`, `users create`) instead of appending method names (`users-get`, `users-post`). Applies generically to any resource. |
 
 ## Dependencies
 
