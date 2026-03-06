@@ -150,7 +150,7 @@ func classifyHTTPError(status int, body []byte) *RequestError {
 	switch {
 	case status == 401:
 		return &RequestError{
-			Message:  "Error: authentication failed (401). Check your --token or DOT_AI_AUTH_TOKEN.",
+			Message:  "authentication failed. Run 'dot-ai auth login', use --token flag, or set DOT_AI_AUTH_TOKEN env. var.",
 			ExitCode: ExitToolError,
 		}
 	case status == 404:

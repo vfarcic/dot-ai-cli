@@ -158,10 +158,10 @@ These commands work with both OAuth and static token auth.
 
 ### Milestone 2: Auth Commands (login/logout/status)
 
-- [ ] Implement `dot-ai auth login` — dynamic client registration, PKCE flow, browser open, local callback server, token storage to credentials.json
-- [ ] Implement `dot-ai auth logout` — clear only OAuth fields from credentials.json (leave `auth_token` intact)
-- [ ] Implement `dot-ai auth status` — show current auth mode, user identity, token expiry
-- [ ] Integration tests for auth commands
+- [x] Implement `dot-ai auth login` — dynamic client registration, PKCE flow, browser open, local callback server, token storage to credentials.json
+- [x] Implement `dot-ai auth logout` — clear only OAuth fields from credentials.json (leave `auth_token` intact)
+- [x] Implement `dot-ai auth status` — show current auth mode, user identity, token expiry
+- [x] Integration tests for auth commands
 
 ### Milestone 3: Manual Testing
 
