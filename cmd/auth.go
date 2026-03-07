@@ -54,12 +54,12 @@ var authStatusCmd = &cobra.Command{
 		out := cmd.OutOrStdout()
 
 		// Check for overrides first (flag/env take priority over stored credentials).
-		if flagToken := GetConfig().Token; flagToken != "" {
-			source := "flag"
-			if os.Getenv("DOT_AI_AUTH_TOKEN") != "" {
-				source = "env"
-			}
-			fmt.Fprintf(out, "Authenticated via: Static token (%s)\n", source)
+		if envToken := os.Getenv("DOT_AI_AUTH_TOKEN"); envToken != "" {
+			fmt.Fprintln(out, "Authenticated via: Static token (env)")
+			return nil
+		}
+		if f := cmd.Root().PersistentFlags().Lookup("token"); f != nil && f.Changed {
+			fmt.Fprintln(out, "Authenticated via: Static token (flag)")
 			return nil
 		}
 
