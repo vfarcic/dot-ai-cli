@@ -1,6 +1,6 @@
 # PRD #6: OAuth Authentication & User Management Commands
 
-**Status:** In Progress
+**Status:** Complete
 **Priority:** High
 **GitHub Issue:** [#6](https://github.com/vfarcic/dot-ai-cli/issues/6)
 **Created:** 2026-03-03
@@ -184,13 +184,13 @@ These commands work with both OAuth and static token auth.
 
 ### Milestone 5: Documentation
 
-- [ ] New `docs/setup/authentication.md` — OAuth login flow, static token, auth precedence, troubleshooting
-- [ ] New `docs/guides/user-management.md` — create/list/delete users via CLI, when to use static users vs IdP connectors
-- [ ] Update `docs/setup/configuration.md` — add settings.json, credentials.json, auth precedence section
+- [x] New `docs/setup/authentication.md` — OAuth login flow, static token, auth precedence, troubleshooting
+- [x] New `docs/guides/user-management.md` — create/list/delete users via CLI, when to use static users vs IdP connectors
+- [x] Update `docs/setup/configuration.md` — add settings.json, credentials.json, auth precedence section
 
 ### Milestone 6: Feature Request to dot-ai
 
-- [ ] Send feature request to `dot-ai` project: update `docs/ai-engine/setup/authentication.md` to link to CLI-specific user management page (`https://devopstoolkit.ai/docs/cli/guides/user-management`)
+- [x] Send feature request to `dot-ai` project: update `docs/ai-engine/setup/authentication.md` to link to CLI-specific user management page (`https://devopstoolkit.ai/docs/cli/guides/user-management`)
 
 ## Design Decisions
 
