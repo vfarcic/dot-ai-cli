@@ -92,7 +92,7 @@ func registerCommands(root *cobra.Command, defs []openapi.CommandDef) {
 		// Collision — create a parent and register each method as a subcommand.
 		parent := &cobra.Command{
 			Use:   name,
-			Short: strings.ToUpper(name[:1]) + name[1:] + " commands",
+			Short: capitalize(name) + " commands",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				return cmd.Help()
 			},
@@ -121,7 +121,7 @@ func registerCommands(root *cobra.Command, defs []openapi.CommandDef) {
 		if !exists {
 			parent = &cobra.Command{
 				Use:   d.Parent,
-				Short: strings.ToUpper(d.Parent[:1]) + d.Parent[1:] + " commands",
+				Short: capitalize(d.Parent) + " commands",
 				RunE: func(cmd *cobra.Command, args []string) error {
 					return cmd.Help()
 				},
@@ -414,4 +414,11 @@ func buildParamInfos(all []openapi.ParamDef, positional []openapi.ParamDef) []pa
 	}
 
 	return infos
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

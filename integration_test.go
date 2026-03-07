@@ -1027,11 +1027,18 @@ func TestAuthLogin_FullFlow(t *testing.T) {
 		t.Fatal("no Location header from /authorize")
 	}
 
-	// Hit the CLI's callback server.
-	cbResp, err := http.Get(callbackURL)
+	// Hit the CLI's callback server (retry to handle startup race).
+	var cbResp *http.Response
+	for i := 0; i < 10; i++ {
+		cbResp, err = http.Get(callbackURL)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if err != nil {
 		cmd.Process.Kill()
-		t.Fatalf("GET callback: %v", err)
+		t.Fatalf("GET callback after retries: %v", err)
 	}
 	cbResp.Body.Close()
 

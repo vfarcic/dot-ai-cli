@@ -22,7 +22,15 @@ If a browser is not available, use `--no-browser`:
 dot-ai auth login --no-browser
 ```
 
-The CLI prints the authorization URL instead of opening a browser. Copy the URL to a machine with a browser and complete the login there.
+The CLI prints the authorization URL instead of opening a browser. The callback URL points to `localhost` on the machine running the CLI, so you must either:
+
+- Open the URL in a browser **on the same machine** (e.g., via X11 forwarding), or
+- Set up **SSH port forwarding** to route the callback port back to the CLI host:
+  ```bash
+  ssh -L <callback-port>:127.0.0.1:<callback-port> user@remote-host
+  ```
+
+For CI/CD or fully headless environments, use [static token authentication](#static-token-authentication) instead.
 
 ## Static Token Authentication
 
@@ -57,7 +65,7 @@ dot-ai auth status
 ```
 
 **OAuth session:**
-```
+```text
 Authenticated via: OAuth
 Token: eyJhbGci...abcd
 Token expires: 2026-03-08T12:00:00Z
@@ -65,13 +73,13 @@ Status: Valid
 ```
 
 **Static token:**
-```
+```text
 Authenticated via: Static token
 Token: eyJhbGci...wxyz
 ```
 
 **Not authenticated:**
-```
+```text
 Not authenticated.
 Run 'dot-ai auth login' or set --token / DOT_AI_AUTH_TOKEN.
 ```
@@ -90,7 +98,7 @@ This removes only the OAuth session fields from `credentials.json`. Any static `
 
 OAuth access tokens have a limited lifetime. When a token expires, `auth status` shows:
 
-```
+```text
 Status: EXPIRED — run 'dot-ai auth login' to re-authenticate
 ```
 

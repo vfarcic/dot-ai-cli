@@ -148,8 +148,8 @@ func Login(serverURL string, noBrowser bool) error {
 	if err != nil {
 		return fmt.Errorf("starting callback server: %w", err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	redirectURI := fmt.Sprintf("http://localhost:%d/callback", port)
+	addr := listener.Addr().(*net.TCPAddr)
+	redirectURI := fmt.Sprintf("http://%s:%d/callback", addr.IP.String(), addr.Port)
 
 	// Register dynamic client.
 	reg, err := RegisterClient(serverURL, redirectURI)

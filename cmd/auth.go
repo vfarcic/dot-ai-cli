@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/vfarcic/dot-ai-cli/internal/auth"
@@ -50,11 +51,22 @@ var authStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current authentication status",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		out := cmd.OutOrStdout()
+
+		// Check for overrides first (flag/env take priority over stored credentials).
+		if flagToken := GetConfig().Token; flagToken != "" {
+			source := "flag"
+			if os.Getenv("DOT_AI_AUTH_TOKEN") != "" {
+				source = "env"
+			}
+			fmt.Fprintf(out, "Authenticated via: Static token (%s)\n", source)
+			return nil
+		}
+
 		info, err := auth.Status()
 		if err != nil {
 			return err
 		}
-		out := cmd.OutOrStdout()
 		switch info.Mode {
 		case "oauth":
 			fmt.Fprintln(out, "Authenticated via: OAuth")
