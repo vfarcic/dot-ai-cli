@@ -23,7 +23,9 @@ func TestResolveDefaults(t *testing.T) {
 	}
 
 	c := Config{}
-	c.Resolve()
+	if err := c.Resolve(); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
 
 	if c.ServerURL != DefaultServerURL {
 		t.Errorf("ServerURL = %q, want %q", c.ServerURL, DefaultServerURL)
@@ -54,7 +56,9 @@ func TestResolveFromFiles(t *testing.T) {
 	}
 
 	c := Config{}
-	c.Resolve()
+	if err := c.Resolve(); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
 
 	if c.ServerURL != "https://file.example.com" {
 		t.Errorf("ServerURL = %q, want %q", c.ServerURL, "https://file.example.com")
@@ -86,7 +90,9 @@ func TestResolveEnvOverridesFiles(t *testing.T) {
 	}
 
 	c := Config{}
-	c.Resolve()
+	if err := c.Resolve(); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
 
 	if c.ServerURL != "https://env.example.com" {
 		t.Errorf("ServerURL = %q, want %q", c.ServerURL, "https://env.example.com")
@@ -112,7 +118,9 @@ func TestResolveFlagsOverrideAll(t *testing.T) {
 		Token:        "flag-token",
 		OutputFormat: "yaml",
 	}
-	c.Resolve()
+	if err := c.Resolve(); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
 
 	if c.ServerURL != "https://flag.example.com" {
 		t.Errorf("ServerURL = %q, want %q", c.ServerURL, "https://flag.example.com")
@@ -143,7 +151,9 @@ func TestResolveOAuthTokenFallback(t *testing.T) {
 	}
 
 	c := Config{}
-	c.Resolve()
+	if err := c.Resolve(); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
 
 	if c.Token != "oauth-token" {
 		t.Errorf("Token = %q, want %q", c.Token, "oauth-token")
@@ -167,7 +177,9 @@ func TestResolveExpiredOAuthTokenSkipped(t *testing.T) {
 	}
 
 	c := Config{}
-	c.Resolve()
+	if err := c.Resolve(); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
 
 	if c.Token != "" {
 		t.Errorf("Token = %q, want empty (expired)", c.Token)
@@ -192,7 +204,9 @@ func TestResolveAuthTokenTakesPriorityOverOAuth(t *testing.T) {
 	}
 
 	c := Config{}
-	c.Resolve()
+	if err := c.Resolve(); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
 
 	if c.Token != "static-token" {
 		t.Errorf("Token = %q, want %q", c.Token, "static-token")

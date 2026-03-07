@@ -66,6 +66,9 @@ if $has_breaking; then
 elif $has_feature; then
   bump_type="minor"
   proposed_version="v${major}.$(( minor + 1 )).0"
+elif $has_bugfix; then
+  bump_type="patch"
+  proposed_version="v${major}.${minor}.$(( patch + 1 ))"
 else
   bump_type="patch"
   proposed_version="v${major}.${minor}.$(( patch + 1 ))"

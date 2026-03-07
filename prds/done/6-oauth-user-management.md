@@ -19,7 +19,7 @@ The CLI currently only supports static bearer tokens (`--token` / `DOT_AI_AUTH_T
 
 Add OAuth browser-based authentication to the CLI alongside the existing static token auth:
 
-```
+```text
 dot-ai auth login
   ↓
 Opens browser → Dex login page → User authenticates

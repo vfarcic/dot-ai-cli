@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -23,9 +24,15 @@ type Config struct {
 //
 // Flag values are already set on the struct by cobra. If a flag was not
 // provided (empty string), we fall back to env, then file, then default.
-func (c *Config) Resolve() {
-	settings, _ := auth.LoadSettings()
-	creds, _ := auth.LoadCredentials()
+func (c *Config) Resolve() error {
+	settings, err := auth.LoadSettings()
+	if err != nil {
+		return fmt.Errorf("loading settings: %w", err)
+	}
+	creds, err := auth.LoadCredentials()
+	if err != nil {
+		return fmt.Errorf("loading credentials: %w", err)
+	}
 
 	// Server URL: flag > env > settings.json > default
 	if c.ServerURL == "" {
@@ -59,6 +66,7 @@ func (c *Config) Resolve() {
 			c.OutputFormat = DefaultOutputFormat
 		}
 	}
+	return nil
 }
 
 // isExpired checks whether the given RFC 3339 timestamp is in the past.

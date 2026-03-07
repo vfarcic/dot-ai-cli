@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -65,7 +66,9 @@ func RegisterClient(serverURL, redirectURI string) (*registrationResponse, error
 		return nil, fmt.Errorf("building registration request: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, regURL, strings.NewReader(string(body)))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, regURL, strings.NewReader(string(body)))
 	if err != nil {
 		return nil, fmt.Errorf("creating registration request: %w", err)
 	}
@@ -106,7 +109,9 @@ func ExchangeCode(serverURL, code, redirectURI, codeVerifier, clientID, clientSe
 		"client_secret": {clientSecret},
 	}
 
-	req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(data.Encode()))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("creating token request: %w", err)
 	}
@@ -174,7 +179,7 @@ func Login(serverURL string, noBrowser bool) error {
 				errMsg = "no authorization code received"
 			}
 			errCh <- fmt.Errorf("authorization failed: %s", errMsg)
-			fmt.Fprintf(w, "<html><body><h1>Authentication failed</h1><p>%s</p><p>You can close this window.</p></body></html>", errMsg)
+			fmt.Fprintf(w, "<html><body><h1>Authentication failed</h1><p>%s</p><p>You can close this window.</p></body></html>", html.EscapeString(errMsg))
 			return
 		}
 		codeCh <- code
@@ -272,6 +277,8 @@ type StatusInfo struct {
 }
 
 // Status returns information about the current authentication state.
+// It follows the same token-selection precedence as config.Resolve():
+// auth_token (static) > access_token (OAuth, only if not expired).
 func Status() (*StatusInfo, error) {
 	creds, err := LoadCredentials()
 	if err != nil {
@@ -279,6 +286,13 @@ func Status() (*StatusInfo, error) {
 	}
 
 	info := &StatusInfo{Mode: "none"}
+
+	// Static token takes precedence, matching config.Resolve() behavior.
+	if creds.AuthToken != "" {
+		info.Mode = "static-token"
+		info.Token = maskToken(creds.AuthToken)
+		return info, nil
+	}
 
 	if creds.AccessToken != "" {
 		info.Mode = "oauth"
@@ -291,13 +305,10 @@ func Status() (*StatusInfo, error) {
 			} else {
 				info.Expired = true
 			}
+		} else {
+			// No expiry means unusable OAuth token.
+			info.Expired = true
 		}
-		return info, nil
-	}
-
-	if creds.AuthToken != "" {
-		info.Mode = "static-token"
-		info.Token = maskToken(creds.AuthToken)
 		return info, nil
 	}
 

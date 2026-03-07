@@ -48,11 +48,18 @@ func (c *Credentials) Save() error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(CredentialsPath(), data, 0600)
+	path := CredentialsPath()
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0600)
 }
 
 // ClearOAuth removes only OAuth session fields, leaving auth_token intact.

@@ -16,7 +16,10 @@ type Settings struct {
 }
 
 func defaultConfigDir() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".dot-ai"
+	}
 	return filepath.Join(home, ".config", "dot-ai")
 }
 
@@ -54,9 +57,16 @@ func (s *Settings) Save() error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(SettingsPath(), data, 0600)
+	path := SettingsPath()
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0600)
 }

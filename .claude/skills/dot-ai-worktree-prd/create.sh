@@ -45,7 +45,12 @@ branch_name="prd-${prd_number}-${slug}"
 
 # --- Compute worktree path ---
 
-repo_name=$(basename "$(git rev-parse --show-toplevel)")
+if ! repo_root=$(git rev-parse --show-toplevel 2>&1); then
+  echo "ERROR=true"
+  echo "MESSAGE=Not in a git repository: ${repo_root}"
+  exit 0
+fi
+repo_name=$(basename "$repo_root")
 worktree_path="../${repo_name}-${branch_name}"
 
 # --- Validate ---
@@ -77,7 +82,9 @@ fi
 
 # --- Create worktree ---
 
-if ! output=$(git worktree add "${worktree_path}" -b "${branch_name}" main 2>&1); then
+default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+
+if ! output=$(git worktree add "${worktree_path}" -b "${branch_name}" "${default_branch}" 2>&1); then
   echo "ERROR=true"
   echo "BRANCH_NAME=${branch_name}"
   echo "WORKTREE_PATH=${worktree_path}"

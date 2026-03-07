@@ -56,7 +56,7 @@ dot-ai query "test" --output json
 
 ## Persistent Configuration Files
 
-The CLI stores settings and credentials in `~/.config/dot-ai/` with `0600` permissions.
+The CLI stores settings and credentials in `~/.config/dot-ai/` with restricted permissions (owner-only access).
 
 **`settings.json`** — user preferences:
 ```json
@@ -108,7 +108,7 @@ dot-ai query "what pods are running?"
 **Using config files (no env vars needed):**
 ```bash
 # Write once
-mkdir -p ~/.config/dot-ai
+mkdir -p ~/.config/dot-ai && chmod 700 ~/.config/dot-ai
 echo '{"server_url":"https://dot-ai.example.com","output_format":"json"}' > ~/.config/dot-ai/settings.json
 echo '{"auth_token":"your-token"}' > ~/.config/dot-ai/credentials.json
 chmod 600 ~/.config/dot-ai/*.json
