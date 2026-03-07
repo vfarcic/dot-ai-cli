@@ -37,6 +37,26 @@ type paramInfo struct {
 	Positional bool   `json:"positional,omitempty"`
 }
 
+// methodSubcommand maps HTTP methods to friendly subcommand names used
+// when multiple methods on the same resource path are grouped.
+var methodSubcommand = map[string]string{
+	"GET":    "list",
+	"POST":   "create",
+	"DELETE": "delete",
+	"PUT":    "update",
+	"PATCH":  "patch",
+}
+
+// hasPathParam reports whether a CommandDef has any path parameters.
+func hasPathParam(d openapi.CommandDef) bool {
+	for _, p := range d.Params {
+		if p.Location == openapi.ParamLocationPath {
+			return true
+		}
+	}
+	return false
+}
+
 // registerCommands creates cobra commands from CommandDefs and adds them
 // to root.
 func registerCommands(root *cobra.Command, defs []openapi.CommandDef) {
@@ -50,17 +70,49 @@ func registerCommands(root *cobra.Command, defs []openapi.CommandDef) {
 		}
 	}
 
-	// Register top-level commands, deduplicating by name.
-	topLevel := map[string]*cobra.Command{}
+	// Pre-scan top-level defs: group by name to detect collisions.
+	topGroups := map[string][]openapi.CommandDef{}
 	for _, d := range topDefs {
-		name := d.Name
-		if _, exists := topLevel[name]; exists {
-			name = name + "-" + strings.ToLower(d.Method)
-			d.Name = name
+		topGroups[d.Name] = append(topGroups[d.Name], d)
+	}
+
+	// Register top-level commands. When multiple methods share the same
+	// name, create a parent command with method-derived subcommands
+	// (e.g., users list, users create, users delete).
+	topLevel := map[string]*cobra.Command{}
+	for name, group := range topGroups {
+		if len(group) == 1 {
+			// No collision — register as a simple top-level command.
+			cmd := buildCobraCommand(group[0])
+			topLevel[name] = cmd
+			root.AddCommand(cmd)
+			continue
 		}
-		cmd := buildCobraCommand(d)
-		topLevel[name] = cmd
-		root.AddCommand(cmd)
+
+		// Collision — create a parent and register each method as a subcommand.
+		parent := &cobra.Command{
+			Use:   name,
+			Short: capitalize(name) + " commands",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return cmd.Help()
+			},
+		}
+		topLevel[name] = parent
+		root.AddCommand(parent)
+
+		for _, d := range group {
+			sub := methodSubcommand[d.Method]
+			if sub == "" {
+				sub = strings.ToLower(d.Method)
+			}
+			// GET with a path param is "get" not "list" (acts on single resource).
+			if d.Method == "GET" && hasPathParam(d) {
+				sub = "get"
+			}
+			d.Name = sub
+			cmd := buildCobraCommand(d)
+			parent.AddCommand(cmd)
+		}
 	}
 
 	// Register subcommands under their parent.
@@ -69,7 +121,7 @@ func registerCommands(root *cobra.Command, defs []openapi.CommandDef) {
 		if !exists {
 			parent = &cobra.Command{
 				Use:   d.Parent,
-				Short: strings.ToUpper(d.Parent[:1]) + d.Parent[1:] + " commands",
+				Short: capitalize(d.Parent) + " commands",
 				RunE: func(cmd *cobra.Command, args []string) error {
 					return cmd.Help()
 				},
@@ -362,4 +414,11 @@ func buildParamInfos(all []openapi.ParamDef, positional []openapi.ParamDef) []pa
 	}
 
 	return infos
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

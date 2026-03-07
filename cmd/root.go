@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -53,5 +54,8 @@ func init() {
 }
 
 func initConfig() {
-	cfg.Resolve()
+	if err := cfg.Resolve(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 }
