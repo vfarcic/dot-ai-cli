@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/vfarcic/dot-ai-cli/internal/client"
 	"github.com/vfarcic/dot-ai-cli/internal/config"
+	"github.com/vfarcic/dot-ai-cli/internal/rbac"
 )
 
 var cfg config.Config
@@ -58,4 +59,17 @@ func initConfig() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	if !isCompletionInvocation() {
+		rbac.FilterCommands(rootCmd, &cfg)
+	}
+}
+
+// isCompletionInvocation returns true when the CLI was invoked for shell
+// completion, where latency from a network call would hurt responsiveness.
+func isCompletionInvocation() bool {
+	if len(os.Args) < 2 {
+		return false
+	}
+	return os.Args[1] == "__complete" || os.Args[1] == "completion"
 }

@@ -33,6 +33,9 @@ func TestResolveDefaults(t *testing.T) {
 	if c.Token != "" {
 		t.Errorf("Token = %q, want empty", c.Token)
 	}
+	if c.TokenSource != TokenSourceNone {
+		t.Errorf("TokenSource = %q, want %q", c.TokenSource, TokenSourceNone)
+	}
 	if c.OutputFormat != DefaultOutputFormat {
 		t.Errorf("OutputFormat = %q, want %q", c.OutputFormat, DefaultOutputFormat)
 	}
@@ -65,6 +68,9 @@ func TestResolveFromFiles(t *testing.T) {
 	}
 	if c.Token != "file-token" {
 		t.Errorf("Token = %q, want %q", c.Token, "file-token")
+	}
+	if c.TokenSource != TokenSourceStatic {
+		t.Errorf("TokenSource = %q, want %q", c.TokenSource, TokenSourceStatic)
 	}
 	if c.OutputFormat != "json" {
 		t.Errorf("OutputFormat = %q, want %q", c.OutputFormat, "json")
@@ -100,6 +106,9 @@ func TestResolveEnvOverridesFiles(t *testing.T) {
 	if c.Token != "env-token" {
 		t.Errorf("Token = %q, want %q", c.Token, "env-token")
 	}
+	if c.TokenSource != TokenSourceStatic {
+		t.Errorf("TokenSource = %q, want %q", c.TokenSource, TokenSourceStatic)
+	}
 	if c.OutputFormat != "json" {
 		t.Errorf("OutputFormat = %q, want %q", c.OutputFormat, "json")
 	}
@@ -127,6 +136,9 @@ func TestResolveFlagsOverrideAll(t *testing.T) {
 	}
 	if c.Token != "flag-token" {
 		t.Errorf("Token = %q, want %q", c.Token, "flag-token")
+	}
+	if c.TokenSource != TokenSourceStatic {
+		t.Errorf("TokenSource = %q, want %q", c.TokenSource, TokenSourceStatic)
 	}
 	if c.OutputFormat != "yaml" {
 		t.Errorf("OutputFormat = %q, want %q", c.OutputFormat, "yaml")
@@ -157,6 +169,9 @@ func TestResolveOAuthTokenFallback(t *testing.T) {
 
 	if c.Token != "oauth-token" {
 		t.Errorf("Token = %q, want %q", c.Token, "oauth-token")
+	}
+	if c.TokenSource != TokenSourceOAuth {
+		t.Errorf("TokenSource = %q, want %q", c.TokenSource, TokenSourceOAuth)
 	}
 }
 
@@ -210,6 +225,9 @@ func TestResolveAuthTokenTakesPriorityOverOAuth(t *testing.T) {
 
 	if c.Token != "static-token" {
 		t.Errorf("Token = %q, want %q", c.Token, "static-token")
+	}
+	if c.TokenSource != TokenSourceStatic {
+		t.Errorf("TokenSource = %q, want %q", c.TokenSource, TokenSourceStatic)
 	}
 }
 

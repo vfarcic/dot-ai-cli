@@ -11,11 +11,16 @@ import (
 const (
 	DefaultServerURL    = "http://localhost:3456"
 	DefaultOutputFormat = "yaml"
+
+	TokenSourceNone   = ""
+	TokenSourceStatic = "static"
+	TokenSourceOAuth  = "oauth"
 )
 
 type Config struct {
 	ServerURL    string
 	Token        string
+	TokenSource  string
 	OutputFormat string
 }
 
@@ -46,13 +51,19 @@ func (c *Config) Resolve() error {
 	}
 
 	// Token: flag > env > credentials.json auth_token > credentials.json access_token (if valid) > none
-	if c.Token == "" {
+	if c.Token != "" {
+		// Token was set by --token flag.
+		c.TokenSource = TokenSourceStatic
+	} else {
 		if v := os.Getenv("DOT_AI_AUTH_TOKEN"); v != "" {
 			c.Token = v
+			c.TokenSource = TokenSourceStatic
 		} else if creds.AuthToken != "" {
 			c.Token = creds.AuthToken
+			c.TokenSource = TokenSourceStatic
 		} else if creds.AccessToken != "" && !isExpired(creds.ExpiresAt) {
 			c.Token = creds.AccessToken
+			c.TokenSource = TokenSourceOAuth
 		}
 	}
 
