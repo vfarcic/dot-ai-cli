@@ -529,6 +529,163 @@ func TestSkillsGenerate_InstallHook_IncompatibleWithPath(t *testing.T) {
 	}
 }
 
+func TestSkillsGenerate_IncludeFlag_FiltersSkills(t *testing.T) {
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--include", "query|recommend")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	for _, name := range []string{"query", "recommend"} {
+		if _, err := os.Stat(filepath.Join(dir, "dot-ai-"+name, "SKILL.md")); err != nil {
+			t.Errorf("expected skill %s to exist", name)
+		}
+	}
+
+	for _, name := range []string{"remediate", "manageOrgData", "troubleshoot-pod"} {
+		if _, err := os.Stat(filepath.Join(dir, "dot-ai-"+name, "SKILL.md")); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be filtered out by include", name)
+		}
+	}
+}
+
+func TestSkillsGenerate_ExcludeFlag_FiltersSkills(t *testing.T) {
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--exclude", "manage.*")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-query", "SKILL.md")); err != nil {
+		t.Error("expected query to exist")
+	}
+
+	for _, name := range []string{"manageOrgData", "manageKnowledge"} {
+		if _, err := os.Stat(filepath.Join(dir, "dot-ai-"+name, "SKILL.md")); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be excluded", name)
+		}
+	}
+}
+
+func TestSkillsGenerate_IncludeAndExclude_Combined(t *testing.T) {
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--include", ".*", "--exclude", "manage.*")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	for _, name := range []string{"query", "recommend", "remediate"} {
+		if _, err := os.Stat(filepath.Join(dir, "dot-ai-"+name, "SKILL.md")); err != nil {
+			t.Errorf("expected skill %s to exist", name)
+		}
+	}
+
+	for _, name := range []string{"manageOrgData", "manageKnowledge"} {
+		if _, err := os.Stat(filepath.Join(dir, "dot-ai-"+name, "SKILL.md")); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be excluded", name)
+		}
+	}
+}
+
+func TestSkillsGenerate_PersistedSettings_Respected(t *testing.T) {
+	home := t.TempDir()
+	env := []string{"HOME=" + home}
+
+	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "skills.include", "query|recommend")
+	if exitCode != 0 {
+		t.Fatal("failed to set skills.include")
+	}
+
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	for _, name := range []string{"query", "recommend"} {
+		if _, err := os.Stat(filepath.Join(dir, "dot-ai-"+name, "SKILL.md")); err != nil {
+			t.Errorf("expected skill %s to exist", name)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-remediate", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("expected remediate to be filtered out by persisted settings")
+	}
+}
+
+func TestSkillsGenerate_FlagsOverrideSettings(t *testing.T) {
+	home := t.TempDir()
+	env := []string{"HOME=" + home}
+
+	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "skills.include", "query")
+	if exitCode != 0 {
+		t.Fatal("failed to set skills.include")
+	}
+
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir, "--include", "recommend")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-recommend", "SKILL.md")); err != nil {
+		t.Error("expected recommend to exist (flag override)")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-query", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("expected query to be filtered out (flag overrides settings)")
+	}
+}
+
+func TestSkillsGenerate_FiltersApplyToPrompts(t *testing.T) {
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--include", "troubleshoot-pod")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-troubleshoot-pod", "SKILL.md")); err != nil {
+		t.Error("expected troubleshoot-pod prompt to exist")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-explain-resource", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("expected explain-resource to be filtered out")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-query", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("expected query tool to be filtered out")
+	}
+}
+
+func TestSkillsGenerate_InvalidRegex_Error(t *testing.T) {
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--include", "[invalid")
+	if exitCode == 0 {
+		t.Fatal("expected error for invalid regex")
+	}
+	if !strings.Contains(stderr, "invalid include pattern") {
+		t.Errorf("expected error about invalid pattern; got: %s", stderr)
+	}
+}
+
+func TestSkillsGenerate_Help_ShowsFilterFlags(t *testing.T) {
+	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	stdout := string(out)
+	if !strings.Contains(stdout, "--include") {
+		t.Error("expected help to mention --include flag")
+	}
+	if !strings.Contains(stdout, "--exclude") {
+		t.Error("expected help to mention --exclude flag")
+	}
+	if !strings.Contains(stdout, "DOT_AI_SKILLS_INCLUDE") {
+		t.Error("expected help to mention DOT_AI_SKILLS_INCLUDE env var")
+	}
+}
+
 func TestSkillsGenerate_PullLatest_InHelp(t *testing.T) {
 	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
 	out, err := cmd.Output()

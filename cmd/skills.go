@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/vfarcic/dot-ai-cli/internal/auth"
 	"github.com/vfarcic/dot-ai-cli/internal/skills"
 )
 
@@ -22,6 +24,8 @@ var skillsAgent string
 var skillsPath string
 var skillsInstallHook bool
 var skillsPullLatest bool
+var skillsInclude string
+var skillsExclude string
 
 var skillsCmd = &cobra.Command{
 	Use:   "skills",
@@ -65,7 +69,8 @@ and regenerates them.`,
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Server skills cache refreshed")
 		}
-		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, RoutingSkill)
+		include, exclude := resolveSkillFilters()
+		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, RoutingSkill)
 		if err != nil {
 			return err
 		}
@@ -80,11 +85,39 @@ and regenerates them.`,
 	},
 }
 
+// resolveSkillFilters applies the standard 4-tier precedence for skill filters:
+// flag > env > settings.json > default (empty).
+func resolveSkillFilters() (include, exclude string) {
+	settings, _ := auth.LoadSettings()
+
+	include = skillsInclude
+	if include == "" {
+		if v := os.Getenv("DOT_AI_SKILLS_INCLUDE"); v != "" {
+			include = v
+		} else {
+			include = settings.SkillsInclude
+		}
+	}
+
+	exclude = skillsExclude
+	if exclude == "" {
+		if v := os.Getenv("DOT_AI_SKILLS_EXCLUDE"); v != "" {
+			exclude = v
+		} else {
+			exclude = settings.SkillsExclude
+		}
+	}
+
+	return include, exclude
+}
+
 func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsAgent, "agent", "", "Target agent: "+strings.Join(agentNames(), ", "))
 	skillsGenerateCmd.Flags().StringVar(&skillsPath, "path", "", "Override output directory (for unsupported agents)")
 	skillsGenerateCmd.Flags().BoolVar(&skillsInstallHook, "install-hook", false, "Install a Claude Code SessionStart hook to regenerate skills on startup (requires --agent claude-code)")
 	skillsGenerateCmd.Flags().BoolVar(&skillsPullLatest, "pull-latest", false, "Force the server to pull the latest skills from the git repository before generating")
+	skillsGenerateCmd.Flags().StringVar(&skillsInclude, "include", "", "Regex to filter skills to include (env: DOT_AI_SKILLS_INCLUDE)")
+	skillsGenerateCmd.Flags().StringVar(&skillsExclude, "exclude", "", "Regex to filter skills to exclude (env: DOT_AI_SKILLS_EXCLUDE)")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})

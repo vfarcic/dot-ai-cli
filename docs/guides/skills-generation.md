@@ -62,6 +62,62 @@ dot-ai skills generate --agent windsurf
 dot-ai skills generate --path ./custom/skills/
 ```
 
+## Filtering Skills
+
+By default, `skills generate` creates skills for all tools and prompts from the server. You can filter which skills are generated using include/exclude regex patterns.
+
+### One-Time Filtering with Flags
+
+```bash
+# Generate only query and recommend skills
+dot-ai skills generate --agent claude-code --include "query|recommend"
+
+# Generate all except management skills
+dot-ai skills generate --agent claude-code --exclude "manage.*"
+
+# Combine: include all, then exclude specific ones
+dot-ai skills generate --agent claude-code --include ".*" --exclude "manage.*"
+```
+
+### Persistent Filtering with Config
+
+Set filters once so all future generations respect them:
+
+```bash
+# Persist an include filter
+dot-ai config set skills.include "query|recommend|remediate"
+
+# All future generates use the filter
+dot-ai skills generate --agent claude-code
+
+# One-time override to generate everything
+dot-ai skills generate --agent claude-code --include ".*"
+
+# Persist an exclude filter
+dot-ai config set skills.exclude "debug-.*|experimental-.*"
+
+# Clear persistent filters
+dot-ai config reset skills.include
+dot-ai config reset skills.exclude
+```
+
+### Filter Precedence
+
+Filters follow the standard 4-tier precedence:
+
+1. `--include` / `--exclude` flags (highest priority)
+2. `DOT_AI_SKILLS_INCLUDE` / `DOT_AI_SKILLS_EXCLUDE` environment variables
+3. `settings.json` → `skills_include` / `skills_exclude`
+4. Default: empty (no filtering — generate all skills)
+
+### Filter Logic
+
+- Patterns are regular expressions matched against skill names (without the `dot-ai-` prefix)
+- If `--include` is set, only skills matching the pattern are kept
+- If `--exclude` is set, skills matching the pattern are removed
+- If both are set, include is applied first, then exclude
+- Filters apply to both tool skills and prompt skills
+
 ## Auto-Update with SessionStart Hook
 
 For Claude Code, you can install a hook that automatically regenerates skills at the start of every session:
