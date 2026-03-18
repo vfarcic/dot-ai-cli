@@ -11,8 +11,10 @@ var configDirFunc = defaultConfigDir
 
 // Settings holds durable user preferences stored in settings.json.
 type Settings struct {
-	ServerURL    string `json:"server_url,omitempty"`
-	OutputFormat string `json:"output_format,omitempty"`
+	ServerURL     string `json:"server_url,omitempty"`
+	OutputFormat  string `json:"output_format,omitempty"`
+	SkillsInclude string `json:"skills_include,omitempty"`
+	SkillsExclude string `json:"skills_exclude,omitempty"`
 }
 
 func defaultConfigDir() string {

@@ -75,6 +75,38 @@ The CLI stores settings and credentials in `~/.config/dot-ai/` with restricted p
 
 OAuth fields (`access_token`, `token_type`, `expires_at`, `client_id`, `client_secret`) are managed automatically by `dot-ai auth login` and `dot-ai auth logout`. See [Authentication](authentication.md) for details.
 
+## Config Command
+
+Manage persistent settings with the `config` command instead of editing JSON files:
+
+```bash
+# Set a value
+dot-ai config set server-url https://dot-ai.example.com
+dot-ai config set output-format json
+dot-ai config set skills.include "query|recommend|remediate"
+dot-ai config set skills.exclude "debug-.*"
+
+# Get a value
+dot-ai config get server-url
+
+# List all settings (always shows all known keys)
+dot-ai config list
+
+# Reset a value to its default
+dot-ai config reset server-url
+```
+
+**Supported keys:**
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `server-url` | Server URL | (not set) |
+| `output-format` | Output format (json, yaml) | `yaml` |
+| `skills.include` | Regex for skills to include | (not set) |
+| `skills.exclude` | Regex for skills to exclude | (not set) |
+
+Unknown keys are rejected with an error listing all valid keys.
+
 ## Configuration Precedence
 
 Settings are applied in this order (highest to lowest priority):
@@ -105,13 +137,11 @@ export DOT_AI_AUTH_TOKEN="your-token"
 dot-ai query "what pods are running?"
 ```
 
-**Using config files (no env vars needed):**
+**Using the config command:**
 ```bash
-# Write once
-mkdir -p ~/.config/dot-ai && chmod 700 ~/.config/dot-ai
-echo '{"server_url":"https://dot-ai.example.com","output_format":"json"}' > ~/.config/dot-ai/settings.json
-echo '{"auth_token":"your-token"}' > ~/.config/dot-ai/credentials.json
-chmod 600 ~/.config/dot-ai/*.json
+# Set persistent values
+dot-ai config set server-url https://dot-ai.example.com
+dot-ai config set output-format json
 
 # Then use normally
 dot-ai query "what pods are running?"

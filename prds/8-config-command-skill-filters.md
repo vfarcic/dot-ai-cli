@@ -144,15 +144,15 @@ The `config` command manages **only `settings.json`** (non-secret preferences). 
 
 ### Milestone 1: Config Command (set/get/list/reset)
 
-- [ ] Add `cmd/config.go` with `config set <key> <value>`, `config get <key>`, `config list`, `config reset <key>` subcommands
-- [ ] Implement key-name mapping (CLI kebab-case ↔ JSON snake_case) with validation of known keys
-- [ ] `config list` shows all known keys with current or default values; unknown key errors list valid keys
-- [ ] Wire subcommands to `auth.LoadSettings()` / `Settings.Save()` for reading and writing `settings.json`
-- [ ] Integration tests: set/get/list/reset for all supported keys, unknown key rejection
+- [x] Add `cmd/config.go` with `config set <key> <value>`, `config get <key>`, `config list`, `config reset <key>` subcommands
+- [x] Implement key-name mapping (CLI kebab-case ↔ JSON snake_case) with validation of known keys
+- [x] `config list` shows all known keys with current or default values; unknown key errors list valid keys
+- [x] Wire subcommands to `auth.LoadSettings()` / `Settings.Save()` for reading and writing `settings.json`
+- [x] Integration tests: set/get/list/reset for all supported keys, unknown key rejection
 
 ### Milestone 2: Skill Include/Exclude Settings
 
-- [ ] Add `SkillsInclude` and `SkillsExclude` fields to `auth.Settings` struct
+- [x] Add `SkillsInclude` and `SkillsExclude` fields to `auth.Settings` struct
 - [ ] Add `--include` / `--exclude` flags to `skills generate` command
 - [ ] Add `DOT_AI_SKILLS_INCLUDE` / `DOT_AI_SKILLS_EXCLUDE` env var support
 - [ ] Resolve filter values using standard 4-tier precedence (flag > env > settings.json > default)
@@ -168,9 +168,9 @@ The `config` command manages **only `settings.json`** (non-secret preferences). 
 
 ### Milestone 4: Documentation
 
-- [ ] Update `docs/setup/configuration.md` with `config` command usage and all supported keys
+- [x] Update `docs/setup/configuration.md` with `config` command usage and all supported keys
 - [ ] Update `docs/guides/skills-generation.md` with include/exclude filter examples
-- [ ] Update `docs/guides/cli-commands-overview.md` with new `config` command
+- [x] Update `docs/guides/cli-commands-overview.md` with new `config` command
 
 ## Design Decisions
 
