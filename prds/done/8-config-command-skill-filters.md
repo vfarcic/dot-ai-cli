@@ -1,6 +1,7 @@
 # PRD #8: Config Command & Skill Include/Exclude Filters
 
-**Status:** Open
+**Status:** Complete
+**Completed:** 2026-03-19
 **Priority:** Medium
 **GitHub Issue:** [#8](https://github.com/vfarcic/dot-ai-cli/issues/8)
 **Created:** 2026-03-18
