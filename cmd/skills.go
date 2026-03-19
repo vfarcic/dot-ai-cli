@@ -69,7 +69,10 @@ and regenerates them.`,
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Server skills cache refreshed")
 		}
-		include, exclude := resolveSkillFilters()
+		include, exclude, err := resolveSkillFilters(cmd)
+		if err != nil {
+			return err
+		}
 		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, RoutingSkill)
 		if err != nil {
 			return err
@@ -87,28 +90,29 @@ and regenerates them.`,
 
 // resolveSkillFilters applies the standard 4-tier precedence for skill filters:
 // flag > env > settings.json > default (empty).
-func resolveSkillFilters() (include, exclude string) {
-	settings, _ := auth.LoadSettings()
-
-	include = skillsInclude
-	if include == "" {
-		if v := os.Getenv("DOT_AI_SKILLS_INCLUDE"); v != "" {
-			include = v
-		} else {
-			include = settings.SkillsInclude
-		}
+func resolveSkillFilters(cmd *cobra.Command) (include, exclude string, err error) {
+	settings, err := auth.LoadSettings()
+	if err != nil {
+		return "", "", err
 	}
 
-	exclude = skillsExclude
-	if exclude == "" {
-		if v := os.Getenv("DOT_AI_SKILLS_EXCLUDE"); v != "" {
-			exclude = v
-		} else {
-			exclude = settings.SkillsExclude
-		}
+	if cmd.Flags().Changed("include") {
+		include = skillsInclude
+	} else if v, ok := os.LookupEnv("DOT_AI_SKILLS_INCLUDE"); ok {
+		include = v
+	} else {
+		include = settings.SkillsInclude
 	}
 
-	return include, exclude
+	if cmd.Flags().Changed("exclude") {
+		exclude = skillsExclude
+	} else if v, ok := os.LookupEnv("DOT_AI_SKILLS_EXCLUDE"); ok {
+		exclude = v
+	} else {
+		exclude = settings.SkillsExclude
+	}
+
+	return include, exclude, nil
 }
 
 func init() {

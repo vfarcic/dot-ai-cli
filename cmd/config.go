@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -69,6 +70,22 @@ func unknownKeyError(name string) error {
 	return fmt.Errorf("unknown key %q. Valid keys: %s", name, validKeyNames())
 }
 
+func validateConfigValue(key, value string) error {
+	switch key {
+	case "output-format":
+		if value != "" && value != "json" && value != "yaml" {
+			return fmt.Errorf("invalid value %q for %q: must be \"json\" or \"yaml\"", value, key)
+		}
+	case "skills.include", "skills.exclude":
+		if value != "" {
+			if _, err := regexp.Compile(value); err != nil {
+				return fmt.Errorf("invalid regex for %s: %w", key, err)
+			}
+		}
+	}
+	return nil
+}
+
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage persistent settings",
@@ -93,6 +110,9 @@ Supported keys:
 		key := findKey(args[0])
 		if key == nil {
 			return unknownKeyError(args[0])
+		}
+		if err := validateConfigValue(key.CLI, args[1]); err != nil {
+			return err
 		}
 		s, err := auth.LoadSettings()
 		if err != nil {

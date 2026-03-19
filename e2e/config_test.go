@@ -9,7 +9,7 @@ import (
 
 func TestConfigSet_SetsValue(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	// Set a value.
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "set", "server-url", "https://example.com")
@@ -35,7 +35,7 @@ func TestConfigSet_SetsValue(t *testing.T) {
 
 func TestConfigGet_ReturnsDefault(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "get", "output-format")
 	if exitCode != 0 {
@@ -48,7 +48,7 @@ func TestConfigGet_ReturnsDefault(t *testing.T) {
 
 func TestConfigGet_ReturnsNotSet(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "get", "skills.include")
 	if exitCode != 0 {
@@ -61,7 +61,7 @@ func TestConfigGet_ReturnsNotSet(t *testing.T) {
 
 func TestConfigList_ShowsAllKeys(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "list")
 	if exitCode != 0 {
@@ -76,7 +76,7 @@ func TestConfigList_ShowsAllKeys(t *testing.T) {
 
 func TestConfigList_ShowsSetAndDefaultValues(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	// Set one key.
 	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "server-url", "https://custom.example.com")
@@ -98,10 +98,13 @@ func TestConfigList_ShowsSetAndDefaultValues(t *testing.T) {
 
 func TestConfigReset_ClearsValue(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	// Set then reset.
-	runCLIWithEnv(t, env, "config", "set", "server-url", "https://example.com")
+	_, setStderr, setExit := runCLIWithEnv(t, env, "config", "set", "server-url", "https://example.com")
+	if setExit != 0 {
+		t.Fatalf("set before reset failed: %s", setStderr)
+	}
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "reset", "server-url")
 	if exitCode != 0 {
 		t.Fatalf("reset: exit %d; stderr: %s", exitCode, stderr)
@@ -122,9 +125,12 @@ func TestConfigReset_ClearsValue(t *testing.T) {
 
 func TestConfigReset_WithDefault(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
-	runCLIWithEnv(t, env, "config", "set", "output-format", "json")
+	_, setStderr, setExit := runCLIWithEnv(t, env, "config", "set", "output-format", "json")
+	if setExit != 0 {
+		t.Fatalf("set before reset failed: %s", setStderr)
+	}
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "reset", "output-format")
 	if exitCode != 0 {
 		t.Fatalf("reset: exit %d; stderr: %s", exitCode, stderr)
@@ -141,7 +147,7 @@ func TestConfigReset_WithDefault(t *testing.T) {
 
 func TestConfigSet_UnknownKey_Error(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	_, stderr, exitCode := runCLIWithEnv(t, env, "config", "set", "foo", "bar")
 	if exitCode == 0 {
@@ -157,7 +163,7 @@ func TestConfigSet_UnknownKey_Error(t *testing.T) {
 
 func TestConfigGet_UnknownKey_Error(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	_, stderr, exitCode := runCLIWithEnv(t, env, "config", "get", "foo")
 	if exitCode == 0 {
@@ -170,7 +176,7 @@ func TestConfigGet_UnknownKey_Error(t *testing.T) {
 
 func TestConfigReset_UnknownKey_Error(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	_, stderr, exitCode := runCLIWithEnv(t, env, "config", "reset", "foo")
 	if exitCode == 0 {
@@ -183,7 +189,7 @@ func TestConfigReset_UnknownKey_Error(t *testing.T) {
 
 func TestConfigSet_SkillsInclude(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "skills.include", "query|recommend")
 	if exitCode != 0 {
@@ -201,7 +207,7 @@ func TestConfigSet_SkillsInclude(t *testing.T) {
 
 func TestConfigSet_SkillsExclude(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := []string{"HOME=" + home, "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
 
 	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "skills.exclude", "debug-.*")
 	if exitCode != 0 {

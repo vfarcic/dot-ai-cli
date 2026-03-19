@@ -530,8 +530,10 @@ func TestSkillsGenerate_InstallHook_IncompatibleWithPath(t *testing.T) {
 }
 
 func TestSkillsGenerate_IncludeFlag_FiltersSkills(t *testing.T) {
+	home := t.TempDir()
 	dir := t.TempDir()
-	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--include", "query|recommend")
+	env := []string{"HOME=" + home, "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE="}
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir, "--include", "query|recommend")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
 	}
@@ -550,8 +552,10 @@ func TestSkillsGenerate_IncludeFlag_FiltersSkills(t *testing.T) {
 }
 
 func TestSkillsGenerate_ExcludeFlag_FiltersSkills(t *testing.T) {
+	home := t.TempDir()
 	dir := t.TempDir()
-	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--exclude", "manage.*")
+	env := []string{"HOME=" + home, "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE="}
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir, "--exclude", "manage.*")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
 	}
@@ -568,8 +572,10 @@ func TestSkillsGenerate_ExcludeFlag_FiltersSkills(t *testing.T) {
 }
 
 func TestSkillsGenerate_IncludeAndExclude_Combined(t *testing.T) {
+	home := t.TempDir()
 	dir := t.TempDir()
-	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--include", ".*", "--exclude", "manage.*")
+	env := []string{"HOME=" + home, "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE="}
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir, "--include", ".*", "--exclude", "manage.*")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
 	}
@@ -638,8 +644,10 @@ func TestSkillsGenerate_FlagsOverrideSettings(t *testing.T) {
 }
 
 func TestSkillsGenerate_FiltersApplyToPrompts(t *testing.T) {
+	home := t.TempDir()
 	dir := t.TempDir()
-	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--include", "troubleshoot-pod")
+	env := []string{"HOME=" + home, "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE="}
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir, "--include", "troubleshoot-pod")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
 	}
@@ -658,8 +666,10 @@ func TestSkillsGenerate_FiltersApplyToPrompts(t *testing.T) {
 }
 
 func TestSkillsGenerate_InvalidRegex_Error(t *testing.T) {
+	home := t.TempDir()
 	dir := t.TempDir()
-	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--include", "[invalid")
+	env := []string{"HOME=" + home, "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE="}
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir, "--include", "[invalid")
 	if exitCode == 0 {
 		t.Fatal("expected error for invalid regex")
 	}
@@ -683,6 +693,9 @@ func TestSkillsGenerate_Help_ShowsFilterFlags(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "DOT_AI_SKILLS_INCLUDE") {
 		t.Error("expected help to mention DOT_AI_SKILLS_INCLUDE env var")
+	}
+	if !strings.Contains(stdout, "DOT_AI_SKILLS_EXCLUDE") {
+		t.Error("expected help to mention DOT_AI_SKILLS_EXCLUDE env var")
 	}
 }
 

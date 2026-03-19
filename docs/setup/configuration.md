@@ -116,6 +116,8 @@ Settings are applied in this order (highest to lowest priority):
 | Server URL | `--server-url` | `DOT_AI_URL` | `settings.json` `server_url` | `http://localhost:3456` |
 | Auth token | `--token` | `DOT_AI_AUTH_TOKEN` | `credentials.json` `auth_token` / `access_token` | none |
 | Output format | `--output` | `DOT_AI_OUTPUT_FORMAT` | `settings.json` `output_format` | `yaml` |
+| Skills include | `--include` | `DOT_AI_SKILLS_INCLUDE` | `settings.json` `skills_include` | none |
+| Skills exclude | `--exclude` | `DOT_AI_SKILLS_EXCLUDE` | `settings.json` `skills_exclude` | none |
 
 For auth tokens specifically, `auth_token` (static) takes priority over `access_token` (OAuth) in the credentials file. Expired OAuth tokens are skipped.
 
