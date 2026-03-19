@@ -29,6 +29,19 @@ These flags work with all commands:
 | `--output` | `DOT_AI_OUTPUT_FORMAT` | Output format: `yaml` or `json` (default: `yaml`) |
 | `--help` | - | Show command help |
 
+## Config Command
+
+Manage persistent settings stored in `~/.config/dot-ai/settings.json`:
+
+```bash
+dot-ai config set <key> <value>   # Set a value
+dot-ai config get <key>           # Get a value
+dot-ai config list                # List all keys and values
+dot-ai config reset <key>         # Reset to default
+```
+
+See [Configuration](../setup/configuration.md) for supported keys and details.
+
 ## Usage Patterns
 
 **Basic command execution:**

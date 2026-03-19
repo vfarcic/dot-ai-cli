@@ -1,6 +1,7 @@
 # PRD #8: Config Command & Skill Include/Exclude Filters
 
-**Status:** Open
+**Status:** Complete
+**Completed:** 2026-03-19
 **Priority:** Medium
 **GitHub Issue:** [#8](https://github.com/vfarcic/dot-ai-cli/issues/8)
 **Created:** 2026-03-18
@@ -144,33 +145,33 @@ The `config` command manages **only `settings.json`** (non-secret preferences). 
 
 ### Milestone 1: Config Command (set/get/list/reset)
 
-- [ ] Add `cmd/config.go` with `config set <key> <value>`, `config get <key>`, `config list`, `config reset <key>` subcommands
-- [ ] Implement key-name mapping (CLI kebab-case ↔ JSON snake_case) with validation of known keys
-- [ ] `config list` shows all known keys with current or default values; unknown key errors list valid keys
-- [ ] Wire subcommands to `auth.LoadSettings()` / `Settings.Save()` for reading and writing `settings.json`
-- [ ] Integration tests: set/get/list/reset for all supported keys, unknown key rejection
+- [x] Add `cmd/config.go` with `config set <key> <value>`, `config get <key>`, `config list`, `config reset <key>` subcommands
+- [x] Implement key-name mapping (CLI kebab-case ↔ JSON snake_case) with validation of known keys
+- [x] `config list` shows all known keys with current or default values; unknown key errors list valid keys
+- [x] Wire subcommands to `auth.LoadSettings()` / `Settings.Save()` for reading and writing `settings.json`
+- [x] Integration tests: set/get/list/reset for all supported keys, unknown key rejection
 
 ### Milestone 2: Skill Include/Exclude Settings
 
-- [ ] Add `SkillsInclude` and `SkillsExclude` fields to `auth.Settings` struct
-- [ ] Add `--include` / `--exclude` flags to `skills generate` command
-- [ ] Add `DOT_AI_SKILLS_INCLUDE` / `DOT_AI_SKILLS_EXCLUDE` env var support
-- [ ] Resolve filter values using standard 4-tier precedence (flag > env > settings.json > default)
-- [ ] Apply regex filtering in `skills.Generate()` to both tools and prompts before writing
+- [x] Add `SkillsInclude` and `SkillsExclude` fields to `auth.Settings` struct
+- [x] Add `--include` / `--exclude` flags to `skills generate` command
+- [x] Add `DOT_AI_SKILLS_INCLUDE` / `DOT_AI_SKILLS_EXCLUDE` env var support
+- [x] Resolve filter values using standard 4-tier precedence (flag > env > settings.json > default)
+- [x] Apply regex filtering in `skills.Generate()` to both tools and prompts before writing
 
 ### Milestone 3: Integration Tests for Skill Filtering
 
-- [ ] Test: `--include` flag filters tools and prompts to matching names only
-- [ ] Test: `--exclude` flag removes matching tools and prompts
-- [ ] Test: combined include + exclude (include applied first, then exclude)
-- [ ] Test: persisted `skills.include` / `skills.exclude` in settings.json are respected when flags are absent
-- [ ] Test: flags override persisted settings
+- [x] Test: `--include` flag filters tools and prompts to matching names only
+- [x] Test: `--exclude` flag removes matching tools and prompts
+- [x] Test: combined include + exclude (include applied first, then exclude)
+- [x] Test: persisted `skills.include` / `skills.exclude` in settings.json are respected when flags are absent
+- [x] Test: flags override persisted settings
 
 ### Milestone 4: Documentation
 
-- [ ] Update `docs/setup/configuration.md` with `config` command usage and all supported keys
-- [ ] Update `docs/guides/skills-generation.md` with include/exclude filter examples
-- [ ] Update `docs/guides/cli-commands-overview.md` with new `config` command
+- [x] Update `docs/setup/configuration.md` with `config` command usage and all supported keys
+- [x] Update `docs/guides/skills-generation.md` with include/exclude filter examples
+- [x] Update `docs/guides/cli-commands-overview.md` with new `config` command
 
 ## Design Decisions
 
@@ -182,6 +183,7 @@ The `config` command manages **only `settings.json`** (non-secret preferences). 
 | 4 | Filters match skill names without `dot-ai-` prefix | 2026-03-18 | Users think in terms of skill names (`query`, `recommend`), not internal prefixed names. The prefix is an implementation detail. |
 | 5 | Supersede issue #3 rather than implement it separately | 2026-03-18 | Issue #3 requested only `--include`/`--exclude` flags. A `config` command with persistent filters is a superset that eliminates the tedium of specifying flags every time. |
 | 6 | `config list` always shows all known keys | 2026-03-18 | Key discoverability is critical. Showing all keys (with defaults for unset values) lets users learn what's configurable without reading docs. Unknown key errors also list valid keys. |
+| 7 | Filter precedence resolved in `cmd/skills.go`, not `config.Config` | 2026-03-18 | Skill filtering is only used by `skills generate`, not globally. Keeping resolution in the command layer avoids adding single-purpose fields to the shared Config struct. |
 
 ## Dependencies
 

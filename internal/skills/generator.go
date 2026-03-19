@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/vfarcic/dot-ai-cli/internal/client"
@@ -95,10 +96,50 @@ func RefreshPrompts(cfg *config.Config) error {
 	return err
 }
 
+// filterByName applies include/exclude regex patterns to a list of names.
+// Include is applied first (keep only matching), then exclude (remove matching).
+// Empty patterns mean no filtering at that stage.
+func filterByName(names []string, include, exclude string) ([]string, error) {
+	var includeRe, excludeRe *regexp.Regexp
+	if include != "" {
+		var err error
+		includeRe, err = regexp.Compile(include)
+		if err != nil {
+			return nil, &client.RequestError{
+				Message:  fmt.Sprintf("Error: invalid include pattern %q: %v", include, err),
+				ExitCode: client.ExitUsageError,
+			}
+		}
+	}
+	if exclude != "" {
+		var err error
+		excludeRe, err = regexp.Compile(exclude)
+		if err != nil {
+			return nil, &client.RequestError{
+				Message:  fmt.Sprintf("Error: invalid exclude pattern %q: %v", exclude, err),
+				ExitCode: client.ExitUsageError,
+			}
+		}
+	}
+	var filtered []string
+	for _, name := range names {
+		if includeRe != nil && !includeRe.MatchString(name) {
+			continue
+		}
+		if excludeRe != nil && excludeRe.MatchString(name) {
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered, nil
+}
+
 // Generate fetches tools and prompts from the server and writes SKILL.md
 // files to the resolved output directory. Returns the output directory used.
-// routingSkill is the embedded routing skill content to write as dot-ai/SKILL.md.
-func Generate(cfg *config.Config, agent, path string, routingSkill []byte) (string, error) {
+// include and exclude are optional regex patterns for filtering skills by name
+// (without the dot-ai- prefix). routingSkill is the embedded routing skill
+// content to write as dot-ai/SKILL.md.
+func Generate(cfg *config.Config, agent, path, include, exclude string, routingSkill []byte) (string, error) {
 	outDir, err := resolveDir(agent, path)
 	if err != nil {
 		return "", err
@@ -112,6 +153,48 @@ func Generate(cfg *config.Config, agent, path string, routingSkill []byte) (stri
 	prompts, err := fetchPrompts(cfg)
 	if err != nil {
 		return "", err
+	}
+
+	if include != "" || exclude != "" {
+		toolNames := make([]string, len(tools))
+		for i, t := range tools {
+			toolNames[i] = t.Name
+		}
+		kept, err := filterByName(toolNames, include, exclude)
+		if err != nil {
+			return "", err
+		}
+		keptSet := make(map[string]bool, len(kept))
+		for _, n := range kept {
+			keptSet[n] = true
+		}
+		filtered := tools[:0]
+		for _, t := range tools {
+			if keptSet[t.Name] {
+				filtered = append(filtered, t)
+			}
+		}
+		tools = filtered
+
+		promptNames := make([]string, len(prompts))
+		for i, p := range prompts {
+			promptNames[i] = p.Name
+		}
+		kept, err = filterByName(promptNames, include, exclude)
+		if err != nil {
+			return "", err
+		}
+		keptSet = make(map[string]bool, len(kept))
+		for _, n := range kept {
+			keptSet[n] = true
+		}
+		filteredPrompts := prompts[:0]
+		for _, p := range prompts {
+			if keptSet[p.Name] {
+				filteredPrompts = append(filteredPrompts, p)
+			}
+		}
+		prompts = filteredPrompts
 	}
 
 	if err := cleanExisting(outDir); err != nil {

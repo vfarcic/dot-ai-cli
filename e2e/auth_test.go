@@ -182,7 +182,7 @@ func TestAuthStatus_ShowsOAuth(t *testing.T) {
 	os.WriteFile(filepath.Join(credDir, "credentials.json"), data, 0600)
 
 	stdout, stderr, exitCode := runCLIWithEnv(t,
-		[]string{"HOME=" + configDir},
+		[]string{"HOME=" + configDir, "DOT_AI_AUTH_TOKEN="},
 		"auth", "status")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
@@ -220,7 +220,7 @@ func TestAuthStatus_ShowsNotAuthenticated(t *testing.T) {
 	configDir := t.TempDir()
 
 	stdout, stderr, exitCode := runCLIWithEnv(t,
-		[]string{"HOME=" + configDir},
+		[]string{"HOME=" + configDir, "DOT_AI_AUTH_TOKEN="},
 		"auth", "status")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
