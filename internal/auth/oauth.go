@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -97,7 +98,7 @@ func RegisterClient(serverURL, redirectURI string) (*registrationResponse, error
 }
 
 // ExchangeCode exchanges an authorization code for an access token.
-func ExchangeCode(serverURL, code, redirectURI, codeVerifier, clientID, clientSecret string) (*tokenResponse, error) {
+func ExchangeCode(serverURL, code, redirectURI, codeVerifier, clientID, clientSecret string, requestedExpiry int) (*tokenResponse, error) {
 	tokenURL := strings.TrimRight(serverURL, "/") + "/token"
 
 	data := url.Values{
@@ -107,6 +108,9 @@ func ExchangeCode(serverURL, code, redirectURI, codeVerifier, clientID, clientSe
 		"code_verifier": {codeVerifier},
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
+	}
+	if requestedExpiry > 0 {
+		data.Set("requested_expiry", strconv.Itoa(requestedExpiry))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -142,7 +146,7 @@ func ExchangeCode(serverURL, code, redirectURI, codeVerifier, clientID, clientSe
 // Login performs the full OAuth Authorization Code flow with PKCE.
 // It registers a dynamic client, starts a local callback server, opens the
 // browser, waits for the callback, exchanges the code, and stores credentials.
-func Login(serverURL string, noBrowser bool) error {
+func Login(serverURL string, noBrowser bool, tokenTTL int) error {
 	// Start local callback server on random port.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -226,7 +230,7 @@ func Login(serverURL string, noBrowser bool) error {
 	srv.Shutdown(context.Background())
 
 	// Exchange code for token.
-	tok, err := ExchangeCode(serverURL, code, redirectURI, verifier, reg.ClientID, reg.ClientSecret)
+	tok, err := ExchangeCode(serverURL, code, redirectURI, verifier, reg.ClientID, reg.ClientSecret, tokenTTL)
 	if err != nil {
 		return err
 	}

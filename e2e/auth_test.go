@@ -243,3 +243,341 @@ func TestAuthHelp_ShowsSubcommands(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthLogin_CustomTTLViaFlag(t *testing.T) {
+	configDir := t.TempDir()
+
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001", "auth", "login", "--no-browser", "--token-ttl", "3600")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configDir)
+	cmd.Env = append(cmd.Env, "HOME="+configDir)
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe: %v", err)
+	}
+	var stderrBuf strings.Builder
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Read stdout to find authorize URL.
+	scanner := bufio.NewScanner(stdoutPipe)
+	var authURL string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "http") {
+			authURL = line
+			break
+		}
+	}
+
+	if authURL == "" {
+		cmd.Process.Kill()
+		t.Fatal("did not find authorize URL in stdout")
+	}
+
+	// Simulate browser flow.
+	noRedirectClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := noRedirectClient.Get(authURL)
+	if err != nil {
+		cmd.Process.Kill()
+		t.Fatalf("GET authorize: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		cmd.Process.Kill()
+		t.Fatalf("expected 302 from /authorize, got %d", resp.StatusCode)
+	}
+
+	callbackURL := resp.Header.Get("Location")
+	if callbackURL == "" {
+		cmd.Process.Kill()
+		t.Fatal("no Location header from /authorize")
+	}
+
+	// Hit callback server.
+	var cbResp *http.Response
+	for i := 0; i < 10; i++ {
+		cbResp, err = http.Get(callbackURL)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		cmd.Process.Kill()
+		t.Fatalf("GET callback after retries: %v", err)
+	}
+	cbResp.Body.Close()
+
+	// Wait for CLI to finish.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("CLI exited with error: %v; stderr: %s", err, stderrBuf.String())
+		}
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("CLI did not exit within 10 seconds")
+	}
+
+	// Verify credentials were stored.
+	credPath := filepath.Join(configDir, ".config", "dot-ai", "credentials.json")
+	data, err := os.ReadFile(credPath)
+	if err != nil {
+		t.Fatalf("reading credentials: %v", err)
+	}
+	var creds map[string]any
+	if err := json.Unmarshal(data, &creds); err != nil {
+		t.Fatalf("parsing credentials: %v", err)
+	}
+	if creds["access_token"] == nil || creds["access_token"] == "" {
+		t.Error("expected access_token to be set in credentials.json")
+	}
+}
+
+func TestAuthLogin_CustomTTLViaEnv(t *testing.T) {
+	configDir := t.TempDir()
+
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001", "auth", "login", "--no-browser")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configDir)
+	cmd.Env = append(cmd.Env, "HOME="+configDir)
+	cmd.Env = append(cmd.Env, "DOT_AI_TOKEN_TTL_SECONDS=7200") // 2 hours
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe: %v", err)
+	}
+	var stderrBuf strings.Builder
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Read stdout to find authorize URL.
+	scanner := bufio.NewScanner(stdoutPipe)
+	var authURL string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "http") {
+			authURL = line
+			break
+		}
+	}
+
+	if authURL == "" {
+		cmd.Process.Kill()
+		t.Fatal("did not find authorize URL in stdout")
+	}
+
+	// Simulate browser flow.
+	noRedirectClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := noRedirectClient.Get(authURL)
+	if err != nil {
+		cmd.Process.Kill()
+		t.Fatalf("GET authorize: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		cmd.Process.Kill()
+		t.Fatalf("expected 302 from /authorize, got %d", resp.StatusCode)
+	}
+
+	callbackURL := resp.Header.Get("Location")
+	if callbackURL == "" {
+		cmd.Process.Kill()
+		t.Fatal("no Location header from /authorize")
+	}
+
+	// Hit callback server.
+	var cbResp *http.Response
+	for i := 0; i < 10; i++ {
+		cbResp, err = http.Get(callbackURL)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		cmd.Process.Kill()
+		t.Fatalf("GET callback after retries: %v", err)
+	}
+	cbResp.Body.Close()
+
+	// Wait for CLI to finish.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("CLI exited with error: %v; stderr: %s", err, stderrBuf.String())
+		}
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("CLI did not exit within 10 seconds")
+	}
+
+	// Verify credentials were stored.
+	credPath := filepath.Join(configDir, ".config", "dot-ai", "credentials.json")
+	data, err := os.ReadFile(credPath)
+	if err != nil {
+		t.Fatalf("reading credentials: %v", err)
+	}
+	var creds map[string]any
+	if err := json.Unmarshal(data, &creds); err != nil {
+		t.Fatalf("parsing credentials: %v", err)
+	}
+	if creds["access_token"] == nil || creds["access_token"] == "" {
+		t.Error("expected access_token to be set in credentials.json")
+	}
+}
+
+func TestAuthLogin_InvalidTTLNegative(t *testing.T) {
+	configDir := t.TempDir()
+
+	stdout, stderr, exitCode := runCLIWithEnv(t,
+		[]string{"HOME=" + configDir},
+		"--server-url", "http://localhost:3001", "auth", "login", "--token-ttl", "-100")
+
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit code for negative TTL, got 0; stdout: %s", stdout)
+	}
+	if !strings.Contains(stderr, "token TTL must be at least 1 second") {
+		t.Errorf("expected validation error message in stderr, got: %s", stderr)
+	}
+}
+
+func TestAuthLogin_InvalidTTLNonNumeric(t *testing.T) {
+	configDir := t.TempDir()
+
+	stdout, stderr, exitCode := runCLIWithEnv(t,
+		[]string{"HOME=" + configDir, "DOT_AI_TOKEN_TTL_SECONDS=abc"},
+		"--server-url", "http://localhost:3001", "auth", "login", "--no-browser")
+
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit code for invalid env var, got 0; stdout: %s", stdout)
+	}
+	if !strings.Contains(stderr, "invalid DOT_AI_TOKEN_TTL_SECONDS") {
+		t.Errorf("expected validation error message in stderr, got: %s", stderr)
+	}
+}
+
+func TestAuthLogin_FlagOverridesEnv(t *testing.T) {
+	configDir := t.TempDir()
+
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001", "auth", "login", "--no-browser", "--token-ttl", "1800")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configDir)
+	cmd.Env = append(cmd.Env, "HOME="+configDir)
+	cmd.Env = append(cmd.Env, "DOT_AI_TOKEN_TTL_SECONDS=7200") // This should be ignored
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe: %v", err)
+	}
+	var stderrBuf strings.Builder
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Read stdout to find authorize URL.
+	scanner := bufio.NewScanner(stdoutPipe)
+	var authURL string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "http") {
+			authURL = line
+			break
+		}
+	}
+
+	if authURL == "" {
+		cmd.Process.Kill()
+		t.Fatal("did not find authorize URL in stdout")
+	}
+
+	// Simulate browser flow.
+	noRedirectClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := noRedirectClient.Get(authURL)
+	if err != nil {
+		cmd.Process.Kill()
+		t.Fatalf("GET authorize: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		cmd.Process.Kill()
+		t.Fatalf("expected 302 from /authorize, got %d", resp.StatusCode)
+	}
+
+	callbackURL := resp.Header.Get("Location")
+	if callbackURL == "" {
+		cmd.Process.Kill()
+		t.Fatal("no Location header from /authorize")
+	}
+
+	// Hit callback server.
+	var cbResp *http.Response
+	for i := 0; i < 10; i++ {
+		cbResp, err = http.Get(callbackURL)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		cmd.Process.Kill()
+		t.Fatalf("GET callback after retries: %v", err)
+	}
+	cbResp.Body.Close()
+
+	// Wait for CLI to finish.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("CLI exited with error: %v; stderr: %s", err, stderrBuf.String())
+		}
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("CLI did not exit within 10 seconds")
+	}
+
+	// Verify credentials were stored (flag value should have been used).
+	credPath := filepath.Join(configDir, ".config", "dot-ai", "credentials.json")
+	data, err := os.ReadFile(credPath)
+	if err != nil {
+		t.Fatalf("reading credentials: %v", err)
+	}
+	var creds map[string]any
+	if err := json.Unmarshal(data, &creds); err != nil {
+		t.Fatalf("parsing credentials: %v", err)
+	}
+	if creds["access_token"] == nil || creds["access_token"] == "" {
+		t.Error("expected access_token to be set in credentials.json")
+	}
+}

@@ -3,12 +3,14 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/vfarcic/dot-ai-cli/internal/auth"
 )
 
 var authNoBrowser bool
+var authTokenTTL int
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
@@ -26,7 +28,27 @@ the token is stored in ~/.config/dot-ai/credentials.json and used
 automatically for subsequent commands.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		serverURL := GetConfig().ServerURL
-		return auth.Login(serverURL, authNoBrowser)
+
+		// Resolve token TTL with precedence: flag > env > default (30 days)
+		tokenTTL := authTokenTTL
+		if tokenTTL == 0 {
+			if v := os.Getenv("DOT_AI_TOKEN_TTL_SECONDS"); v != "" {
+				parsed, err := strconv.Atoi(v)
+				if err != nil {
+					return fmt.Errorf("invalid DOT_AI_TOKEN_TTL_SECONDS: %w", err)
+				}
+				tokenTTL = parsed
+			} else {
+				tokenTTL = 2592000 // 30 days default
+			}
+		}
+
+		// Validate
+		if tokenTTL < 1 {
+			return fmt.Errorf("token TTL must be at least 1 second, got %d", tokenTTL)
+		}
+
+		return auth.Login(serverURL, authNoBrowser, tokenTTL)
 	},
 }
 
@@ -92,6 +114,7 @@ var authStatusCmd = &cobra.Command{
 
 func init() {
 	authLoginCmd.Flags().BoolVar(&authNoBrowser, "no-browser", false, "Don't open browser; print the login URL instead")
+	authLoginCmd.Flags().IntVar(&authTokenTTL, "token-ttl", 0, "Token lifetime in seconds (default: 30 days) (env: DOT_AI_TOKEN_TTL_SECONDS)")
 	authCmd.AddCommand(authLoginCmd)
 	authCmd.AddCommand(authLogoutCmd)
 	authCmd.AddCommand(authStatusCmd)
