@@ -720,3 +720,116 @@ func TestSkillsGenerate_InstallHook_InHelp(t *testing.T) {
 		t.Error("expected help to mention --install-hook flag")
 	}
 }
+
+func TestSkillsGenerate_CustomOnlyFlag_SkipsToolSkills(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	env := []string{"HOME=" + home, "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY="}
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir, "--custom-only")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	// Prompt skills should exist.
+	for _, prompt := range []string{"troubleshoot-pod", "explain-resource", "security-review", "optimize-resources"} {
+		if _, err := os.Stat(filepath.Join(dir, "dot-ai-"+prompt, "SKILL.md")); err != nil {
+			t.Errorf("expected prompt skill %s to exist", prompt)
+		}
+	}
+
+	// Tool skills should NOT exist.
+	for _, tool := range []string{"query", "recommend", "remediate", "operate", "manageOrgData", "manageKnowledge", "version", "projectSetup", "users"} {
+		if _, err := os.Stat(filepath.Join(dir, "dot-ai-"+tool, "SKILL.md")); !os.IsNotExist(err) {
+			t.Errorf("expected tool skill %s to be absent with --custom-only", tool)
+		}
+	}
+
+	// Routing skill should still exist.
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai", "SKILL.md")); err != nil {
+		t.Error("expected routing skill to exist even with --custom-only")
+	}
+}
+
+func TestSkillsGenerate_CustomOnlyEnvVar(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	env := []string{"HOME=" + home, "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=true"}
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	// Tool skills should NOT exist.
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-query", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("expected tool skills to be absent when DOT_AI_SKILLS_CUSTOM_ONLY=true")
+	}
+
+	// Prompt skills should exist.
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-troubleshoot-pod", "SKILL.md")); err != nil {
+		t.Error("expected prompt skills to exist")
+	}
+}
+
+func TestSkillsGenerate_CustomOnlyPersistedSetting(t *testing.T) {
+	home := t.TempDir()
+	env := []string{"HOME=" + home}
+
+	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "skills.custom_only", "true")
+	if exitCode != 0 {
+		t.Fatal("failed to set skills.custom_only")
+	}
+
+	dir := t.TempDir()
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-query", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("expected tool skills to be absent with persisted custom_only setting")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-troubleshoot-pod", "SKILL.md")); err != nil {
+		t.Error("expected prompt skills to exist")
+	}
+}
+
+func TestSkillsGenerate_CustomOnlyWithIncludeExclude(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	env := []string{"HOME=" + home, "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY="}
+	_, stderr, exitCode := runCLIWithEnv(t, env, "skills", "generate", "--path", dir,
+		"--custom-only", "--include", "troubleshoot-pod")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	// Only troubleshoot-pod should exist.
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-troubleshoot-pod", "SKILL.md")); err != nil {
+		t.Error("expected troubleshoot-pod to exist")
+	}
+
+	// Other prompts should be filtered out.
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-explain-resource", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("expected explain-resource to be filtered out by --include")
+	}
+
+	// Tool skills should not exist.
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-query", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("expected tool skills to be absent with --custom-only")
+	}
+}
+
+func TestSkillsGenerate_Help_ShowsCustomOnlyFlag(t *testing.T) {
+	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	stdout := string(out)
+	if !strings.Contains(stdout, "--custom-only") {
+		t.Error("expected help to mention --custom-only flag")
+	}
+	if !strings.Contains(stdout, "DOT_AI_SKILLS_CUSTOM_ONLY") {
+		t.Error("expected help to mention DOT_AI_SKILLS_CUSTOM_ONLY env var")
+	}
+}

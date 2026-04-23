@@ -9,7 +9,7 @@ import (
 
 func TestConfigSet_SetsValue(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	// Set a value.
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "set", "server-url", "https://example.com")
@@ -35,7 +35,7 @@ func TestConfigSet_SetsValue(t *testing.T) {
 
 func TestConfigGet_ReturnsDefault(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "get", "output-format")
 	if exitCode != 0 {
@@ -48,7 +48,7 @@ func TestConfigGet_ReturnsDefault(t *testing.T) {
 
 func TestConfigGet_ReturnsNotSet(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "get", "skills.include")
 	if exitCode != 0 {
@@ -61,13 +61,13 @@ func TestConfigGet_ReturnsNotSet(t *testing.T) {
 
 func TestConfigList_ShowsAllKeys(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	stdout, stderr, exitCode := runCLIWithEnv(t, env, "config", "list")
 	if exitCode != 0 {
 		t.Fatalf("exit %d; stderr: %s", exitCode, stderr)
 	}
-	for _, key := range []string{"server-url", "output-format", "skills.include", "skills.exclude"} {
+	for _, key := range []string{"server-url", "output-format", "skills.include", "skills.exclude", "skills.custom_only"} {
 		if !strings.Contains(stdout, key) {
 			t.Errorf("list output missing key %q; got: %s", key, stdout)
 		}
@@ -76,7 +76,7 @@ func TestConfigList_ShowsAllKeys(t *testing.T) {
 
 func TestConfigList_ShowsSetAndDefaultValues(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	// Set one key.
 	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "server-url", "https://custom.example.com")
@@ -98,7 +98,7 @@ func TestConfigList_ShowsSetAndDefaultValues(t *testing.T) {
 
 func TestConfigReset_ClearsValue(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	// Set then reset.
 	_, setStderr, setExit := runCLIWithEnv(t, env, "config", "set", "server-url", "https://example.com")
@@ -125,7 +125,7 @@ func TestConfigReset_ClearsValue(t *testing.T) {
 
 func TestConfigReset_WithDefault(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	_, setStderr, setExit := runCLIWithEnv(t, env, "config", "set", "output-format", "json")
 	if setExit != 0 {
@@ -147,7 +147,7 @@ func TestConfigReset_WithDefault(t *testing.T) {
 
 func TestConfigSet_UnknownKey_Error(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	_, stderr, exitCode := runCLIWithEnv(t, env, "config", "set", "foo", "bar")
 	if exitCode == 0 {
@@ -163,7 +163,7 @@ func TestConfigSet_UnknownKey_Error(t *testing.T) {
 
 func TestConfigGet_UnknownKey_Error(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	_, stderr, exitCode := runCLIWithEnv(t, env, "config", "get", "foo")
 	if exitCode == 0 {
@@ -176,7 +176,7 @@ func TestConfigGet_UnknownKey_Error(t *testing.T) {
 
 func TestConfigReset_UnknownKey_Error(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	_, stderr, exitCode := runCLIWithEnv(t, env, "config", "reset", "foo")
 	if exitCode == 0 {
@@ -189,7 +189,7 @@ func TestConfigReset_UnknownKey_Error(t *testing.T) {
 
 func TestConfigSet_SkillsInclude(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "skills.include", "query|recommend")
 	if exitCode != 0 {
@@ -207,7 +207,7 @@ func TestConfigSet_SkillsInclude(t *testing.T) {
 
 func TestConfigSet_SkillsExclude(t *testing.T) {
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_AUTH_TOKEN="}
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
 
 	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "skills.exclude", "debug-.*")
 	if exitCode != 0 {
@@ -220,6 +220,37 @@ func TestConfigSet_SkillsExclude(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "debug-.*") {
 		t.Errorf("get skills.exclude = %q, want 'debug-.*'", stdout)
+	}
+}
+
+func TestConfigSet_SkillsCustomOnly(t *testing.T) {
+	home := t.TempDir()
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
+
+	_, _, exitCode := runCLIWithEnv(t, env, "config", "set", "skills.custom_only", "true")
+	if exitCode != 0 {
+		t.Fatal("set skills.custom_only failed")
+	}
+
+	stdout, _, exitCode := runCLIWithEnv(t, env, "config", "get", "skills.custom_only")
+	if exitCode != 0 {
+		t.Fatal("get skills.custom_only failed")
+	}
+	if !strings.Contains(stdout, "true") {
+		t.Errorf("get skills.custom_only = %q, want 'true'", stdout)
+	}
+}
+
+func TestConfigSet_SkillsCustomOnly_InvalidValue(t *testing.T) {
+	home := t.TempDir()
+	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=", "DOT_AI_URL=", "DOT_AI_OUTPUT_FORMAT=", "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=", "DOT_AI_AUTH_TOKEN="}
+
+	_, stderr, exitCode := runCLIWithEnv(t, env, "config", "set", "skills.custom_only", "maybe")
+	if exitCode == 0 {
+		t.Fatal("expected error for invalid skills.custom_only value")
+	}
+	if !strings.Contains(stderr, "must be") {
+		t.Errorf("expected validation error, got: %s", stderr)
 	}
 }
 

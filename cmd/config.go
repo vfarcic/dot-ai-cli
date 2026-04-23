@@ -47,6 +47,13 @@ var knownKeys = []configKey{
 		Get:         func(s *auth.Settings) string { return s.SkillsExclude },
 		Set:         func(s *auth.Settings, v string) { s.SkillsExclude = v },
 	},
+	{
+		CLI:         "skills.custom_only",
+		Description: "Only generate custom skills, skip MCP tools (true/false)",
+		Default:     "",
+		Get:         func(s *auth.Settings) string { return s.SkillsCustomOnly },
+		Set:         func(s *auth.Settings, v string) { s.SkillsCustomOnly = v },
+	},
 }
 
 func findKey(name string) *configKey {
@@ -81,6 +88,10 @@ func validateConfigValue(key, value string) error {
 			if _, err := regexp.Compile(value); err != nil {
 				return fmt.Errorf("invalid regex for %s: %w", key, err)
 			}
+		}
+	case "skills.custom_only":
+		if value != "" && value != "true" && value != "false" {
+			return fmt.Errorf("invalid value %q for %q: must be \"true\" or \"false\"", value, key)
 		}
 	}
 	return nil
