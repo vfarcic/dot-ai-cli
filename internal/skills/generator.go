@@ -139,15 +139,18 @@ func filterByName(names []string, include, exclude string) ([]string, error) {
 // include and exclude are optional regex patterns for filtering skills by name
 // (without the dot-ai- prefix). routingSkill is the embedded routing skill
 // content to write as dot-ai/SKILL.md.
-func Generate(cfg *config.Config, agent, path, include, exclude string, routingSkill []byte) (string, error) {
+func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte) (string, error) {
 	outDir, err := resolveDir(agent, path)
 	if err != nil {
 		return "", err
 	}
 
-	tools, err := fetchTools(cfg)
-	if err != nil {
-		return "", err
+	var tools []toolDef
+	if !customOnly {
+		tools, err = fetchTools(cfg)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	prompts, err := fetchPrompts(cfg)

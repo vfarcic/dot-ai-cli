@@ -26,6 +26,7 @@ var skillsInstallHook bool
 var skillsPullLatest bool
 var skillsInclude string
 var skillsExclude string
+var skillsCustomOnly bool
 
 var skillsCmd = &cobra.Command{
 	Use:   "skills",
@@ -69,11 +70,11 @@ and regenerates them.`,
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Server skills cache refreshed")
 		}
-		include, exclude, err := resolveSkillFilters(cmd)
+		include, exclude, customOnly, err := resolveSkillFilters(cmd)
 		if err != nil {
 			return err
 		}
-		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, RoutingSkill)
+		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, customOnly, RoutingSkill)
 		if err != nil {
 			return err
 		}
@@ -90,10 +91,10 @@ and regenerates them.`,
 
 // resolveSkillFilters applies the standard 4-tier precedence for skill filters:
 // flag > env > settings.json > default (empty).
-func resolveSkillFilters(cmd *cobra.Command) (include, exclude string, err error) {
+func resolveSkillFilters(cmd *cobra.Command) (include, exclude string, customOnly bool, err error) {
 	settings, err := auth.LoadSettings()
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 
 	if cmd.Flags().Changed("include") {
@@ -112,7 +113,15 @@ func resolveSkillFilters(cmd *cobra.Command) (include, exclude string, err error
 		exclude = settings.SkillsExclude
 	}
 
-	return include, exclude, nil
+	if cmd.Flags().Changed("custom-only") {
+		customOnly = skillsCustomOnly
+	} else if v, ok := os.LookupEnv("DOT_AI_SKILLS_CUSTOM_ONLY"); ok {
+		customOnly = v == "true"
+	} else {
+		customOnly = settings.SkillsCustomOnly == "true"
+	}
+
+	return include, exclude, customOnly, nil
 }
 
 func init() {
@@ -122,6 +131,7 @@ func init() {
 	skillsGenerateCmd.Flags().BoolVar(&skillsPullLatest, "pull-latest", false, "Force the server to pull the latest skills from the git repository before generating")
 	skillsGenerateCmd.Flags().StringVar(&skillsInclude, "include", "", "Regex to filter skills to include (env: DOT_AI_SKILLS_INCLUDE)")
 	skillsGenerateCmd.Flags().StringVar(&skillsExclude, "exclude", "", "Regex to filter skills to exclude (env: DOT_AI_SKILLS_EXCLUDE)")
+	skillsGenerateCmd.Flags().BoolVar(&skillsCustomOnly, "custom-only", false, "Only generate custom prompt skills, skip MCP tool skills (env: DOT_AI_SKILLS_CUSTOM_ONLY)")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})
