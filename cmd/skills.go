@@ -116,7 +116,7 @@ func resolveSkillFilters(cmd *cobra.Command) (include, exclude string, customOnl
 	if cmd.Flags().Changed("custom-only") {
 		customOnly = skillsCustomOnly
 	} else if v, ok := os.LookupEnv("DOT_AI_SKILLS_CUSTOM_ONLY"); ok {
-		customOnly = v == "true" || v == "1" || v == "yes"
+		customOnly = v == "true"
 	} else {
 		customOnly = settings.SkillsCustomOnly == "true"
 	}
