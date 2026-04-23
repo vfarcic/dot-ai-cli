@@ -80,7 +80,8 @@ and regenerates them.`,
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Skills generated successfully in %s\n", outDir)
 		if skillsInstallHook {
-			if err := skills.InstallSessionHook(); err != nil {
+			hookCmd := skills.BuildHookCommand(include, exclude, customOnly)
+			if err := skills.InstallSessionHook(hookCmd); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "SessionStart hook installed in %s\n", ".claude/settings.json")

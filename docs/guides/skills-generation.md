@@ -62,6 +62,26 @@ dot-ai skills generate --agent windsurf
 dot-ai skills generate --path ./custom/skills/
 ```
 
+## Custom-Only Mode
+
+By default, `skills generate` creates skills for both MCP tools (query, recommend, remediate, etc.) and custom prompts (troubleshoot-pod, explain-resource, etc.). Use `--custom-only` to skip MCP tool skills and generate only custom prompt skills:
+
+```bash
+dot-ai skills generate --agent claude-code --custom-only
+```
+
+Persist it so all future generations respect it:
+
+```bash
+dot-ai config set skills.custom_only true
+dot-ai skills generate --agent claude-code
+
+# Clear it
+dot-ai config reset skills.custom_only
+```
+
+`--custom-only` follows the standard 4-tier precedence (see [Filter Precedence](#filter-precedence) below) and can be combined with `--include`/`--exclude` to further filter within the custom skills.
+
 ## Filtering Skills
 
 By default, `skills generate` creates skills for all tools and prompts from the server. You can filter which skills are generated using include/exclude regex patterns.
@@ -105,18 +125,19 @@ dot-ai config reset skills.exclude
 
 Filters follow the standard 4-tier precedence:
 
-1. `--include` / `--exclude` flags (highest priority)
-2. `DOT_AI_SKILLS_INCLUDE` / `DOT_AI_SKILLS_EXCLUDE` environment variables
-3. `settings.json` → `skills_include` / `skills_exclude`
+1. `--include` / `--exclude` / `--custom-only` flags (highest priority)
+2. `DOT_AI_SKILLS_INCLUDE` / `DOT_AI_SKILLS_EXCLUDE` / `DOT_AI_SKILLS_CUSTOM_ONLY` environment variables
+3. `settings.json` → `skills_include` / `skills_exclude` / `skills_custom_only`
 4. Default: empty (no filtering — generate all skills)
 
 ### Filter Logic
 
 - Patterns are regular expressions matched against skill names (without the `dot-ai-` prefix)
+- If `--custom-only` is set, MCP tool skills are skipped entirely
 - If `--include` is set, only skills matching the pattern are kept
 - If `--exclude` is set, skills matching the pattern are removed
 - If both are set, include is applied first, then exclude
-- Filters apply to both tool skills and prompt skills
+- `--include`/`--exclude` filters apply to both tool skills and prompt skills (or just prompt skills when `--custom-only` is active)
 
 ## Auto-Update with SessionStart Hook
 
@@ -126,7 +147,14 @@ For Claude Code, you can install a hook that automatically regenerates skills at
 dot-ai skills generate --agent claude-code --install-hook
 ```
 
-This adds a `SessionStart` hook to `.claude/settings.json` that runs `dot-ai skills generate --agent claude-code` on session startup. The hook is idempotent — running the command again won't create duplicates. It merges with any existing settings.
+This adds a `SessionStart` hook to `.claude/settings.json` that runs `dot-ai skills generate --agent claude-code` on session startup. The hook captures the flags you pass — `--custom-only`, `--include`, and `--exclude` are forwarded so the hook reproduces the same behavior:
+
+```bash
+dot-ai skills generate --agent claude-code --install-hook --custom-only --exclude "debug-.*"
+# Hook command: dot-ai skills generate --agent claude-code --custom-only --exclude "debug-.*"
+```
+
+The hook is idempotent — running the command again with the same flags won't create duplicates. Re-running with different flags replaces the existing hook. It merges with any existing settings.
 
 ## Updating Skills
 

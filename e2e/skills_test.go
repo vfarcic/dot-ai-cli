@@ -819,6 +819,127 @@ func TestSkillsGenerate_CustomOnlyWithIncludeExclude(t *testing.T) {
 	}
 }
 
+func TestSkillsGenerate_InstallHook_ForwardsCustomOnly(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0o755)
+
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "claude-code", "--install-hook", "--custom-only")
+	cmd.Dir = dir
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		exitCode := 0
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, errBuf.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("expected settings.json: %v", err)
+	}
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+	hooks := settings["hooks"].(map[string]any)
+	sessionStart := hooks["SessionStart"].([]any)
+	entry := sessionStart[0].(map[string]any)
+	innerHooks := entry["hooks"].([]any)
+	hook := innerHooks[0].(map[string]any)
+	command := hook["command"].(string)
+	if !strings.Contains(command, "--custom-only") {
+		t.Errorf("expected hook command to contain --custom-only, got: %s", command)
+	}
+}
+
+func TestSkillsGenerate_InstallHook_ForwardsIncludeExclude(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0o755)
+
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "claude-code", "--install-hook",
+		"--include", "query|recommend", "--exclude", "manage.*")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "HOME="+home, "DOT_AI_SKILLS_INCLUDE=", "DOT_AI_SKILLS_EXCLUDE=", "DOT_AI_SKILLS_CUSTOM_ONLY=")
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		exitCode := 0
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, errBuf.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("expected settings.json: %v", err)
+	}
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+	hooks := settings["hooks"].(map[string]any)
+	sessionStart := hooks["SessionStart"].([]any)
+	entry := sessionStart[0].(map[string]any)
+	innerHooks := entry["hooks"].([]any)
+	hook := innerHooks[0].(map[string]any)
+	command := hook["command"].(string)
+	if !strings.Contains(command, "--include") {
+		t.Errorf("expected hook command to contain --include, got: %s", command)
+	}
+	if !strings.Contains(command, "--exclude") {
+		t.Errorf("expected hook command to contain --exclude, got: %s", command)
+	}
+}
+
+func TestSkillsGenerate_InstallHook_ReplacesOnRerun(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0o755)
+
+	// First run without --custom-only.
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "claude-code", "--install-hook")
+	cmd.Dir = dir
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run 1 failed; stderr: %s", errBuf.String())
+	}
+
+	// Second run with --custom-only should replace the hook.
+	cmd = exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "claude-code", "--install-hook", "--custom-only")
+	cmd.Dir = dir
+	errBuf.Reset()
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run 2 failed; stderr: %s", errBuf.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("expected settings.json: %v", err)
+	}
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+	hooks := settings["hooks"].(map[string]any)
+	sessionStart := hooks["SessionStart"].([]any)
+	if len(sessionStart) != 1 {
+		t.Fatalf("expected exactly 1 SessionStart entry after replace, got %d", len(sessionStart))
+	}
+	entry := sessionStart[0].(map[string]any)
+	innerHooks := entry["hooks"].([]any)
+	if len(innerHooks) != 1 {
+		t.Fatalf("expected exactly 1 inner hook after replace, got %d", len(innerHooks))
+	}
+	hook := innerHooks[0].(map[string]any)
+	command := hook["command"].(string)
+	if !strings.Contains(command, "--custom-only") {
+		t.Errorf("expected replaced hook to contain --custom-only, got: %s", command)
+	}
+}
+
 func TestSkillsGenerate_Help_ShowsCustomOnlyFlag(t *testing.T) {
 	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
 	out, err := cmd.Output()

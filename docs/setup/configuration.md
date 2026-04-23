@@ -104,6 +104,7 @@ dot-ai config reset server-url
 | `output-format` | Output format (json, yaml) | `yaml` |
 | `skills.include` | Regex for skills to include | (not set) |
 | `skills.exclude` | Regex for skills to exclude | (not set) |
+| `skills.custom_only` | Only generate custom skills, skip MCP tools (true/false) | (not set) |
 
 Unknown keys are rejected with an error listing all valid keys.
 
@@ -118,6 +119,7 @@ Settings are applied in this order (highest to lowest priority):
 | Output format | `--output` | `DOT_AI_OUTPUT_FORMAT` | `settings.json` `output_format` | `yaml` |
 | Skills include | `--include` | `DOT_AI_SKILLS_INCLUDE` | `settings.json` `skills_include` | none |
 | Skills exclude | `--exclude` | `DOT_AI_SKILLS_EXCLUDE` | `settings.json` `skills_exclude` | none |
+| Skills custom only | `--custom-only` | `DOT_AI_SKILLS_CUSTOM_ONLY` | `settings.json` `skills_custom_only` | none |
 
 For auth tokens specifically, `auth_token` (static) takes priority over `access_token` (OAuth) in the credentials file. Expired OAuth tokens are skipped.
 
