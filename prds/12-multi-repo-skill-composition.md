@@ -18,187 +18,194 @@ Current workarounds fail:
 
 ## Solution Overview
 
-Add a repeatable `--repo <url>` flag to `dot-ai skills generate`. Each `--repo` instructs the CLI to additionally fetch from that repository via the server's new optional `repo` parameter (PRD-side: [dot-ai #581](https://github.com/vfarcic/dot-ai/issues/581)). The CLI does the orchestration: N+1 fetches, accumulate in memory, dedupe on name with first-wins, single wipe, single write.
+Add a single (non-repeatable) `--repo <url>` flag to `dot-ai skills generate`. Each invocation is **self-contained and source-scoped**:
+
+1. CLI fetches from one repo (default = server's env-var repo, or the URL passed via `--repo`).
+2. Server returns the prompts and a stable `source` identifier (PRD: [dot-ai #581](https://github.com/vfarcic/dot-ai/issues/581)).
+3. CLI scans the output directory for skills whose frontmatter `source:` matches the current source, deletes them, then writes the fresh set tagged with that same `source:`.
+4. Skills tagged with *other* sources are left untouched.
+
+Composition across multiple sources is achieved by running the command multiple times — typically as multiple agent hooks, one per source:
 
 ```
-dot-ai skills generate --agent claude-code \
-    --repo https://github.com/orgA/skills \
-    --repo https://github.com/orgB/skills
-
-  ├── GET  /api/v1/prompts                         (server's env-var repo + built-ins)
-  ├── GET  /api/v1/prompts?repo=...orgA/skills    (orgA's skills)
-  ├── GET  /api/v1/prompts?repo=...orgB/skills    (orgB's skills)
-  │
-  └── merge → dedupe by name (first-wins) → cleanExisting() once → write all
+Hook A:  dot-ai skills generate --repo https://github.com/orgA/skills
+Hook B:  DOT_AI_GIT_TOKEN=$TOKEN_B dot-ai skills generate --repo https://gitlab.corp/team/skills
+Hook C:  dot-ai skills generate                                    # uses env-var repo
 ```
+
+Each hook owns its slice. No accumulation, no in-memory merge, no global wipe. Per-source credentials, branches, and paths come from per-hook env vars (the hook is the scoping unit).
 
 ## Scope
 
 **In scope:**
-- Repeatable `--repo <url>` flag on `dot-ai skills generate`.
-- CLI orchestration: call `fetchPrompts` once per source (default + each `--repo`), merge results, dedupe by name (first repo wins, defaults to env-var repo).
-- Render path: when rendering a prompt that came from a `--repo` source, pass that `repo` URL through to `POST /api/v1/prompts/:name?repo=<url>` so the server fetches the rendered content from the right place.
-- Single `cleanExisting()` call before writing — guarantees no clobbering across sources.
-- Partial-failure handling: if any source fails (network error, invalid URL, etc.), abort the generate with a clear error message listing which source failed. Don't write partial results.
-- Integration tests against `dot-ai-mock-server` covering: single-repo (no override, unchanged behavior); two-repo composition; collision (same name from two repos, first wins); one source failing.
+
+- Single `--repo <url>` flag on `dot-ai skills generate` (not repeatable).
+- Per-source wipe-and-replace: scan output dir, remove files whose `source:` frontmatter matches the current source, write the fresh set.
+- `source:` frontmatter on every generated skill file. Value comes verbatim from the server's response `source` field.
+- File lock on the output directory for the duration of generate (prevents concurrent hook corruption).
+- Collision policy across sources: **skip + warn**. If a skill name already exists on disk tagged with a different source, log a warning and do not overwrite. First-arrived-wins by invocation order (typically hook firing order).
+- Migration path for existing users whose skills predate `source:` frontmatter.
+- Integration tests against `dot-ai-mock-server` covering: env-var-only path (unchanged behavior), `--repo` path, cross-source name collision (skip + warn), removed-upstream skill cleanup, concurrent-invocation safety.
 
 **Out of scope (deferred):**
-- `--branch` per repo. Server defaults branch to `main`; matches existing env-var default. Add later if needed.
-- `--path` per repo. Server defaults to repo root. Add later if requested for monorepo setups.
-- Per-repo tokens (`--token-for-<url>` or paired env vars). MVP uses the server's single `DOT_AI_GIT_TOKEN`. Limitation: a user with repos across different providers (GitHub OSS + private GitLab) cannot authenticate to both at once. To be revisited when requested.
-- Parallel fetching of sources. MVP fetches sequentially. Easy to parallelize later if generate runtime becomes noticeable.
-- Per-repo prefix on skill names (the "Option A" framing from dot-ai#575). Current first-wins collision policy preserves the trigger contract (`dot-ai-query` stays `dot-ai-query`). Prefixing would be a breaking UX change and is not part of this PRD.
+
+- Repeatable `--repo`. Replaced by hook-per-source model.
+- `--branch` / `--path` flags. Per-hook env vars (`DOT_AI_USER_PROMPTS_BRANCH`, `DOT_AI_USER_PROMPTS_PATH`) handle this naturally if the server adds them later. Not needed for MVP.
+- Per-repo token flag. Per-hook env vars (`DOT_AI_GIT_TOKEN`) handle this naturally — each hook scopes its own auth realm. Solves the cross-provider auth case (e.g. private GitHub + private GitLab) without server-side `_TOKEN_N` plumbing.
+- CLI-local cloning (the "Axis 2" / `--repo-local` proposal from #575). Server-side fetch only. To be revisited as a separate PRD if a VPN-gated-repo use case crystallizes.
+- Configuration file (`.dot-ai/skills.yaml` or similar). Hooks already serve as both config and execution mechanism per source.
+- Per-source skill-name prefixing. Preserves the `/dot-ai-query` trigger contract; collisions are handled by skip + warn instead.
 
 ## Architecture
 
-### Current behavior (single repo)
+### Current behavior (single repo, global wipe)
 
 ```go
 // generator.go:Generate
 prompts, err := fetchPrompts(cfg)               // GET /api/v1/prompts
-// ... filter, cleanExisting, write
+cleanExisting(outDir)                            // wipes ALL dot-ai-* files
 for _, p := range prompts {
     rendered := renderPrompt(cfg, p.Name)        // POST /api/v1/prompts/:name
     writePromptSkill(outDir, p, rendered)
 }
 ```
 
-### Proposed behavior (multi-repo)
+### Proposed behavior (per-source wipe-and-replace)
 
 ```go
 // generator.go:Generate (sketch)
-sources := []string{""}                          // "" = default (env-var repo + built-ins)
-sources = append(sources, skillsRepos...)        // each --repo URL
+lock, err := acquireLock(outDir)                                 // flock on outDir/.dot-ai.lock
+if err != nil { return fmt.Errorf("another generate is running: %w", err) }
+defer lock.Release()
 
-type sourcedPrompt struct {
-    prompt promptDef
-    repo   string                                // "" for default, URL for --repo source
-}
+resp, err := fetchPrompts(cfg, skillsRepo)                       // ?repo=<url> if skillsRepo != ""
+if err != nil { return err }
+source := resp.Source                                            // verbatim from server, e.g. "https://github.com/orgA/skills"
 
-merged := map[string]sourcedPrompt{}             // first-wins by name
-for _, repo := range sources {
-    list, err := fetchPromptsFromSource(cfg, repo)
-    if err != nil {
-        return "", fmt.Errorf("fetch from %q: %w", displayRepo(repo), err)
-    }
-    for _, p := range list {
-        if _, exists := merged[p.Name]; exists {
-            continue                              // first-wins (default + --repo args in order)
-        }
-        merged[p.Name] = sourcedPrompt{prompt: p, repo: repo}
+// Wipe only this source's existing skills.
+existing, err := scanExistingSkills(outDir)                       // returns map[name]existingSkill{path, source}
+if err != nil { return err }
+for _, sk := range existing {
+    if sk.source == source {
+        os.Remove(sk.path)
     }
 }
 
-// ... filter, cleanExisting (once), write all
-for _, sp := range merged {
-    rendered := renderPromptFromSource(cfg, sp.prompt.Name, sp.repo)
-    writePromptSkill(outDir, sp.prompt, rendered)
+// Write fresh skills for this source, skipping cross-source collisions.
+for _, p := range resp.Prompts {
+    if other, exists := existing[p.Name]; exists && other.source != source {
+        log.Warnf("skipping %q: already provided by source %q (first-source-wins)", p.Name, other.source)
+        continue
+    }
+    rendered := renderPrompt(cfg, p.Name, skillsRepo)
+    writePromptSkill(outDir, p, rendered, source)                // writes `source: <url>` into frontmatter
 }
 ```
 
-New helpers:
+### Skill frontmatter
 
-```go
-func fetchPromptsFromSource(cfg *config.Config, repo string) ([]promptDef, error) {
-    path := "/api/v1/prompts"
-    if repo != "" {
-        path += "?repo=" + url.QueryEscape(repo)
-    }
-    // ... unchanged from fetchPrompts otherwise
-}
+Each generated skill file gains a `source:` field in its YAML frontmatter:
 
-func renderPromptFromSource(cfg *config.Config, name, repo string) *promptRenderResponse {
-    path := "/api/v1/prompts/" + url.PathEscape(name)
-    if repo != "" {
-        path += "?repo=" + url.QueryEscape(repo)
-    }
-    // ... unchanged from renderPrompt otherwise
-}
+```yaml
+---
+name: query
+description: Natural language cluster queries
+source: https://github.com/orgA/skills
+---
 ```
 
-### CLI flag
-
-```go
-// cmd/skills.go
-var skillsRepos []string
-
-func init() {
-    skillsGenerateCmd.Flags().StringArrayVar(&skillsRepos, "repo", nil,
-        "Additional git repository URL to fetch skills from (repeatable). " +
-        "Skills from these repos are composed with the server's configured repo. " +
-        "On name collision, first source wins (server's configured repo, then --repo flags in order).")
-    // ... existing flag registrations
-}
-```
-
-`Generate()` signature gains a `repos []string` parameter; existing call sites pass `nil`/empty.
+The value is whatever the server returned in its `source` field. The CLI does not normalize it — it must match exactly between writes and subsequent wipes.
 
 ### Collision policy
 
-First-source wins, in this order:
-1. Server's env-var-configured repo + built-ins (always fetched, even if `--repo` is supplied)
-2. `--repo` flags in the order they appear on the command line
+When CLI is about to write skill `X` and a file with that name already exists on disk:
 
-When a collision occurs, the later source's skill is silently dropped from the merged result. Add a log message at debug or info level identifying the dropped duplicate to aid debugging without flooding normal output.
+| Existing `source:` | Action |
+|---|---|
+| Same as current invocation's source | Overwrite (this is the normal wipe-and-replace path) |
+| Different source | **Skip and log a warning.** First-arrived wins. |
+| Missing (legacy skill from pre-`source:` era) | See **Migration** below |
 
-### Partial-failure handling
+Rationale: this is the trade-off discussed in #575 — the hook-per-source model loses the deterministic flag-ordering that a single-invocation multi-`--repo` would give us. Skip + warn surfaces the conflict visibly without silently overwriting work from another hook.
 
-If any single source fails, the entire generate aborts before `cleanExisting()` runs. Rationale: a partial generate is worse than no generate — the user might end up with a stale skill set from the previous run plus a confusing error, or a half-written new skill set. Atomic-on-failure is cleaner.
+### Concurrent invocations
 
-Exception: if the default source (env-var repo) succeeds but a `--repo` source fails because of a network blip, the user can still re-run with that `--repo` omitted. The error message must clearly identify which source failed and how.
+Agent hooks may fire in parallel. To prevent two `dot-ai skills generate` invocations from corrupting each other's output, acquire an exclusive `flock` on `<outDir>/.dot-ai.lock` for the duration of generate. If the lock cannot be acquired within a short timeout (~5s), fail with a clear error: "another `dot-ai skills generate` is in progress."
+
+This is cheap insurance against agent hook racing.
+
+### Migration
+
+Existing installations have skill files generated before this PRD landed — they lack `source:` frontmatter entirely. On a fresh `dot-ai skills generate` invocation:
+
+- **If `--repo` is supplied**: untagged legacy files are *not* wiped (they don't belong to this source) and *not* counted in the collision check (skill is written, untagged file gets overwritten if name matches — same as today's wipe-everything behavior, with a one-time log warning).
+- **If `--repo` is omitted** (env-var repo): untagged legacy files are assumed to belong to the env-var repo and are wiped as part of normal per-source cleanup. Same effect as today.
+
+In practice this means: first post-upgrade generate from the env-var repo cleans up legacy files automatically. First post-upgrade generate with `--repo` may leave legacy files behind, which the next env-var-repo generate will clean up.
+
+An optional `dot-ai skills migrate` command could explicitly retag legacy files based on a user-supplied source URL — out of scope for MVP unless users hit pain.
 
 ## Technical Decisions
 
-### Why N+1 server calls instead of a single server-side list-of-repos call?
+### Why single `--repo` instead of repeatable?
 
-Server-side composition (PRD-B in dot-ai#575) would need indexed env vars (`DOT_AI_USER_PROMPTS_REPO_2`, etc.) parsed at startup, a server-side per-repo cache map, and a collision policy enforced on the server. All of that is bigger than the minimal server change being proposed in [dot-ai#581](https://github.com/vfarcic/dot-ai/issues/581) (one optional query parameter).
+Earlier drafts of this PRD made `--repo` repeatable, with the CLI accumulating sources, deduping, and doing a single wipe-then-write. The hook-per-source model (each agent hook owns one source) collapses that complexity entirely: composition becomes the agent's job, not the CLI's. The CLI gets dumber; the model gets cleaner.
 
-Moving the orchestration to the CLI keeps the server change tiny and gives the user per-invocation flexibility — they can compose differently in different sessions without changing server config.
+The cost is that per-source ordering is no longer expressed in a single command line — collisions are resolved by hook firing order. Mitigated by skip + warn so collisions are visible.
 
-### Why first-source-wins instead of prefixing skill names?
+### Why per-source wipe via frontmatter instead of a side-channel manifest?
 
-Prefixing (`dot-ai-orgA-query`, `dot-ai-orgB-query`) would change the trigger contract for every existing user — `/dot-ai-query` would no longer work. First-source-wins preserves the contract: the primary source's skills keep their names, additional sources extend the catalog with non-conflicting skills.
+A manifest file (`.dot-ai/skills.lock`) introduces state that can drift from reality if a skill file is manually deleted or moved. Frontmatter keeps provenance attached to the file itself — no drift possible. Each generate scans the directory and rebuilds its view of "what came from where" from primary source.
 
-### Why fetch the default source even when `--repo` is supplied?
+### Why skip + warn instead of last-write-wins on cross-source collision?
 
-The env-var-configured repo is the admin-set baseline. Users supplying `--repo` are *extending* the catalog, not *replacing* it. Replacing would surprise users who expect the server's built-in skills (like the routing skill and tool skills) to remain available.
+Last-write-wins is order-dependent in a way the user can't see (depends on which hook fires last). Skip + warn preserves whoever ran first and surfaces the problem so the user can resolve it (rename a skill, drop a source, etc.). The `/dot-ai-query` trigger contract benefits from stability.
 
-If a user truly wants to skip the default, that's a future `--no-default-repo` flag — out of scope here.
+### Why file lock instead of "document that hooks must run sequentially"?
 
-### Why abort on partial failure instead of skipping the failed source?
+Sequential hook configuration is agent-specific and easy to get wrong. A file lock is one line of Go and makes the worst case ("two hooks fired in parallel, output dir is corrupted") impossible.
 
-A skip-and-continue model means the user might not notice that orgB's skills are missing — they'd just see fewer skills with no error. Atomic-on-failure surfaces the problem loudly and gives the user a chance to fix the URL/connectivity before re-running. The cost is a single failed generate; the benefit is correctness.
+### Why no config file?
+
+A config file would let users express per-source modifiers (branch, path, token) declaratively. But agent hooks already serve as both config and execution per source — each hook line is one source with its own env. Adding a config file on top would duplicate the responsibility. Revisit only if a concrete user need surfaces that hooks can't express.
+
+### Why no CLI-local cloning?
+
+[#575 discussion](https://github.com/vfarcic/dot-ai/issues/575) raises VPN-gated repos (server can't reach, laptop can) and local directories as use cases. Both require the CLI to do git operations directly, which has knock-on effects on the render path (server doesn't have the source files). That's a different architecture and deserves a separate PRD if/when a concrete user needs it.
 
 ## Success Criteria
 
-1. `dot-ai skills generate` with no `--repo` flag behaves identically to today (no regression).
-2. `dot-ai skills generate --repo X` writes the union of the server's default skills and X's skills, with a single wipe of the output directory.
-3. `--repo X --repo Y` writes the union of all three sources (default + X + Y).
-4. Collisions are resolved first-source-wins; a log line identifies dropped duplicates.
-5. If any source fails, no files are written and the error identifies which source failed.
-6. Integration tests against the mock server cover all four cases above plus rendering a prompt that came from a `--repo` source (verifies the `?repo=` query param plumbing).
+1. `dot-ai skills generate` with no flags behaves equivalently to today — env-var repo's skills are written, stale ones from the same source are removed.
+2. `dot-ai skills generate --repo X` writes X's skills tagged with `source: X` and leaves skills from other sources untouched.
+3. Running multiple invocations (different `--repo` values) in sequence composes their skills correctly without clobbering each other.
+4. Cross-source name collisions log a warning and preserve the first-arrived skill.
+5. Removing a skill upstream and re-running generate for that source removes it from disk.
+6. Concurrent invocations are serialized via file lock; the second invocation fails fast with a clear message.
+7. Integration tests against the mock server cover all six cases above.
 
 ## Milestones
 
-- [ ] **M1: Server contract finalized** — Confirm [dot-ai#581](https://github.com/vfarcic/dot-ai/issues/581) merges with `?repo=` on both `GET /api/v1/prompts` and `POST /api/v1/prompts/:name`. Update mock server fixtures to support the query parameter.
-- [ ] **M2: CLI flag plumbing** — Add `--repo` repeatable flag to `skills generate`. Thread through to `Generate()` as a `repos []string` parameter. Existing call sites pass `nil`.
-- [ ] **M3: Multi-source fetch + merge** — Implement `fetchPromptsFromSource` and `renderPromptFromSource` helpers. Build the `sourcedPrompt` map with first-source-wins dedup. Single `cleanExisting()` + write loop using the merged map.
-- [ ] **M4: Partial-failure handling** — Abort on any source error before any disk write. Error message identifies failing source.
-- [ ] **M5: Integration tests** — Cover the five Success Criteria items. Reuse existing `runCLI` harness with mock-server fixtures for multi-repo responses.
-- [ ] **M6: Documentation update** — Update `README.md` and any `docs/` references to mention `--repo`. Cross-link to [dot-ai#581](https://github.com/vfarcic/dot-ai/issues/581).
+- [ ] **M1: Server contract** — Confirm [dot-ai #581](https://github.com/vfarcic/dot-ai/issues/581) ships with `?repo=` on `GET /api/v1/prompts` and `POST /api/v1/prompts/:name`, plus a stable `source` field in responses. Update mock server fixtures to support `?repo=` and return `source`.
+- [ ] **M2: CLI flag** — Add single `--repo <url>` flag to `skills generate`. Plumb through to `Generate()`.
+- [ ] **M3: Per-source wipe + frontmatter** — Implement directory scan with `source:` extraction, per-source removal, and `source:` injection on write. Refactor `cleanExisting` from "wipe all" to "wipe matching source."
+- [ ] **M4: Collision policy + file lock** — Implement skip + warn on cross-source collision. Acquire `flock` on output dir; fail fast on contention.
+- [ ] **M5: Render path** — Pass `?repo=` through to `POST /api/v1/prompts/:name` when generate ran with `--repo`.
+- [ ] **M6: Integration tests** — Cover the seven Success Criteria items.
+- [ ] **M7: Documentation** — Update `README.md` and any `docs/` references. Document the hook-per-source model with example agent hook configs. Document the legacy-file migration behavior.
 
-> **Implementation order**: M1 → M2 → M3 → M4 → M5 → M6.
+> **Implementation order**: M1 → M2 → M3 → M4 → M5 → M6 → M7.
 
 ## Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| Mock server doesn't support the `?repo=` query param | Add fixtures keyed by `?repo=` value to `dot-ai-mock-server`; publish updated image as part of M1. |
-| Users hit the cross-provider token limitation | Document the single-token MVP limitation prominently in `--repo` help text and docs. Track demand for per-repo tokens. |
-| First-source-wins masks a configuration mistake (user expected orgB's skill to win) | Log dropped-duplicate names at info level (visible in default verbosity) so users can spot unexpected collisions. |
-| Slow generate when many `--repo` flags are supplied (sequential fetches) | Accept for MVP; parallelize later if needed. Per-server clone is already `--depth 1` so dominated by network round-trips, not data transfer. |
+| Mock server doesn't support `?repo=` or stable `source` | Block on M1; fixtures must be updated before downstream milestones can be tested. |
+| Users hit cross-source name collisions and don't notice | Warning is logged at default verbosity, not debug. Document in `--repo` help text. |
+| Hooks racing on the output dir | File lock (M4). Worst case: one of two parallel hooks fails fast with a clear error. |
+| Legacy skill files (pre-`source:`) confuse the wipe logic | Migration heuristic in M3: untagged files belong to env-var repo by default. One-time `dot-ai skills migrate` deferred unless needed. |
+| Stale `source:` tags after a repo URL change (user re-points a hook to a fork) | Acceptable for MVP — user can `dot-ai skills generate --repo <old-url>` once with the old URL, or manually delete. Document as a known wart. |
 
 ## Dependencies
 
-- **[dot-ai #581](https://github.com/vfarcic/dot-ai/issues/581)** — server-side optional `repo` parameter on the prompts endpoints. M1 of this PRD blocks on that PRD landing.
-- **`dot-ai-mock-server`** — fixture support for `?repo=` query parameter. Image republish required before M5 can complete.
+- **[dot-ai #581](https://github.com/vfarcic/dot-ai/issues/581)** — server-side optional `repo` parameter + stable `source` field in response. M1 blocks on that PRD landing.
+- **`dot-ai-mock-server`** — fixture support for `?repo=` and `source` field in responses. Image republish required before M6.
