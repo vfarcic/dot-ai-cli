@@ -1,6 +1,6 @@
 # PRD #12: Multi-Repo Skill Composition via `--repo` Flag
 
-**Status:** Draft
+**Status:** Implemented (awaiting end-to-end verification + PR)
 **Related Issue:** [vfarcic/dot-ai #575](https://github.com/vfarcic/dot-ai/issues/575) (discussion); [vfarcic/dot-ai #581](https://github.com/vfarcic/dot-ai/issues/581) (server-side companion PRD)
 
 ## Problem Statement
@@ -185,13 +185,13 @@ A config file would let users express per-source modifiers (branch, path, token)
 
 ## Milestones
 
-- [ ] **M1: Server contract** — Confirm [dot-ai #581](https://github.com/vfarcic/dot-ai/issues/581) ships with `?repo=` on `GET /api/v1/prompts` and `POST /api/v1/prompts/:name`, plus a stable `source` field in responses. Update mock server fixtures to support `?repo=` and return `source`.
-- [ ] **M2: CLI flag** — Add single `--repo <url>` flag to `skills generate`. Plumb through to `Generate()`.
-- [ ] **M3: Per-source wipe + frontmatter** — Implement directory scan with `source:` extraction, per-source removal, and `source:` injection on write. Refactor `cleanExisting` from "wipe all" to "wipe matching source."
-- [ ] **M4: Collision policy + file lock** — Implement skip + warn on cross-source collision. Acquire `flock` on output dir; fail fast on contention.
-- [ ] **M5: Render path** — Pass `?repo=` through to `POST /api/v1/prompts/:name` when generate ran with `--repo`.
-- [ ] **M6: Integration tests** — Cover the seven Success Criteria items.
-- [ ] **M7: Documentation** — Update `README.md` and any `docs/` references. Document the hook-per-source model with example agent hook configs. Document the legacy-file migration behavior.
+- [x] **M1: Server contract** — Verified against `ghcr.io/vfarcic/dot-ai-mock-server:feat-prd-581`: `?repo=` is accepted on both `GET /api/v1/prompts` and `POST /api/v1/prompts/:name`; responses include a `source` field (`"built-in"` by default, echoed URL when `--repo` set). Mock image pinned in `docker-compose.yml`.
+- [x] **M2: CLI flag** — Single, non-repeatable `--repo <url>` flag added to `dot-ai skills generate` (`cmd/skills.go`); plumbed through `Generate()` (signature now returns `outDir, source, err`); `fetchPrompts` and `renderPrompt` attach `?repo=` only when value is non-empty so env-var-only path is unchanged. Hook installer (`internal/skills/hook.go`) propagates `--repo` into the installed hook command (`BuildHookCommand`). `Source:` stdout line gated on `cmd.Flags().Changed("repo")` and redacted via `RedactURL` to scrub userinfo.
+- [x] **M3: Per-source wipe + frontmatter** — `scanExistingSkills` replaces `cleanExisting`: walks `outDir`, parses YAML frontmatter via `gopkg.in/yaml.v3` (`internal/skills/frontmatter.go::readSkillSource`, bounded at 64 KiB), builds `map[name]existingSkill{Path, Source}`. Per-source wipe deletes only files where `Source == currentSource`. `writeToolSkill`/`writePromptSkill` inject `source: <verbatim-from-server>` into frontmatter. Migration heuristic: env-var path wipes untagged legacy files (preserves Success #1 back-compat); `--repo` path leaves them but allows in-place overwrite on name collision.
+- [x] **M4: Collision policy + file lock** — Cross-source collision (`existing.Source != currentSource && existing.Source != ""`): write skipped, stderr warning `warning: skipping "X": already provided by source "<other>" (first-source-wins)` with `other` redacted via `RedactURL`. Exclusive `flock` on `<outDir>/.dot-ai.lock` (`internal/skills/lock.go`, `gofrs/flock v0.13.0`) held across the entire `Generate()`; 5 s `TryLock` poll loop; contention surfaces as `Error: another \`dot-ai skills generate\` is in progress` without leaking the lock path; non-contention errors wrapped as `could not acquire output-directory lock` to scrub filesystem details.
+- [x] **M5: Render path** — `renderPrompt(cfg, name, repo)` forwards `?repo=` to `POST /api/v1/prompts/:name` when `--repo` was supplied. Delivered alongside M2.
+- [x] **M6: Integration tests** — Six Success Criteria covered by integration tests against the mock server (no inline `httptest`): `TestSkillsGenerate_NoRepoFlag_OutputUnchanged` (#1), `TestSkillsGenerate_M3_RepoFlag_TagsSourceFrontmatter` (#2), `TestSkillsGenerate_M3_PreservesOtherSourceSkills` (#3, pre-seeded foreign source since mock returns same prompts per repo), `TestSkillsGenerate_M4_CrossSourceCollision_SkipsAndWarns` (#4), `TestSkillsGenerate_M3_RemovedUpstream_WipedOnRerun` (#5), `TestSkillsGenerate_M4_FileLock_FailsFastOnContention` (#6). Plus `TestSkillsGenerate_RepoFlag_ReachesServer`, `TestSkillsGenerate_RepoFlag_InHelp`, `TestSkillsGenerate_RepoFlag_RedactsUserinfo`, `TestSkillsGenerate_InstallHook_ForwardsRepo`, `TestSkillsGenerate_InstallHook_NoRepoFlag_NoRepoInHook`, `TestSkillsGenerate_FrontmatterReadIsBounded`. Suite: 138/138 PASS via `task test`.
+- [x] **M7: Documentation** — `docs/guides/skills-generation.md` updated with new top-level section "Composing Skills From Multiple Repositories" (subsections: Collision Policy, Concurrent Invocations, Source Frontmatter, Legacy File Migration), updated "Updating Skills" to describe per-source wipe + `source:` frontmatter, and updated "Auto-Update with SessionStart Hook" to document `--repo` forwarding with a three-hooks-one-per-source install example. All command outputs in docs are captured from real CLI runs against the mock server. `cmd/skills.go` Long help text also updated. `README.md` intentionally untouched (thin pointer to devopstoolkit.ai). Changelog fragment deferred to `/dot-ai-changelog-fragment` invocation.
 
 > **Implementation order**: M1 → M2 → M3 → M4 → M5 → M6 → M7.
 

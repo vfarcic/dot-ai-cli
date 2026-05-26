@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/gofrs/flock"
 )
 
 func TestSkillsGenerate_CreatesToolSkills(t *testing.T) {
@@ -940,6 +943,140 @@ func TestSkillsGenerate_InstallHook_ReplacesOnRerun(t *testing.T) {
 	}
 }
 
+func TestSkillsGenerate_NoRepoFlag_OutputUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	stdout, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+	// PRD #12 Success Criteria #1: no-flag invocation must remain byte-for-byte
+	// equivalent to today. No 'Source:' line should be emitted.
+	if strings.Contains(stdout, "Source:") {
+		t.Errorf("no-flag invocation must not emit 'Source:' line (back-compat), got: %s", stdout)
+	}
+}
+
+func TestSkillsGenerate_RepoFlag_ReachesServer(t *testing.T) {
+	dir := t.TempDir()
+	repo := "https://github.com/orgA/skills"
+	stdout, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--repo", repo)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+	want := "Source: " + repo
+	if !strings.Contains(stdout, want) {
+		t.Errorf("expected stdout to report %q (proves --repo round-tripped to server), got: %s", want, stdout)
+	}
+	if strings.Contains(stdout, "Source: built-in") {
+		t.Errorf("expected source to NOT be 'built-in' when --repo supplied, got: %s", stdout)
+	}
+}
+
+func TestSkillsGenerate_RepoFlag_InHelp(t *testing.T) {
+	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected exit 0, got error: %v", err)
+	}
+	if !strings.Contains(string(out), "--repo") {
+		t.Error("expected help to mention --repo flag")
+	}
+}
+
+func TestSkillsGenerate_RepoFlag_RedactsUserinfo(t *testing.T) {
+	dir := t.TempDir()
+	const secret = "s3cret-token-xyz"
+	repo := "https://x:" + secret + "@github.com/orgA/skills"
+	stdout, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--repo", repo)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+	// The token must not appear in any user-visible output.
+	if strings.Contains(stdout, secret) {
+		t.Errorf("expected token to be redacted from stdout, but found %q in: %s", secret, stdout)
+	}
+	if strings.Contains(stderr, secret) {
+		t.Errorf("expected token to be redacted from stderr, but found %q in: %s", secret, stderr)
+	}
+	// The Source line should still appear with the credential stripped.
+	wantRedacted := "Source: https://github.com/orgA/skills"
+	if !strings.Contains(stdout, wantRedacted) {
+		t.Errorf("expected redacted source line %q in stdout, got: %s", wantRedacted, stdout)
+	}
+}
+
+func TestSkillsGenerate_InstallHook_ForwardsRepo(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0o755)
+
+	repo := "https://github.com/orgA/skills"
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "claude-code", "--install-hook", "--repo", repo)
+	cmd.Dir = dir
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		exitCode := 0
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, errBuf.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("expected settings.json: %v", err)
+	}
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+	hooks := settings["hooks"].(map[string]any)
+	sessionStart := hooks["SessionStart"].([]any)
+	entry := sessionStart[0].(map[string]any)
+	innerHooks := entry["hooks"].([]any)
+	hook := innerHooks[0].(map[string]any)
+	command := hook["command"].(string)
+	if !strings.Contains(command, "--repo") {
+		t.Errorf("expected hook command to contain --repo, got: %s", command)
+	}
+	if !strings.Contains(command, repo) {
+		t.Errorf("expected hook command to embed the repo URL %q, got: %s", repo, command)
+	}
+}
+
+func TestSkillsGenerate_InstallHook_NoRepoFlag_NoRepoInHook(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0o755)
+
+	cmd := exec.Command(binaryPath, "--server-url", "http://localhost:3001",
+		"skills", "generate", "--agent", "claude-code", "--install-hook")
+	cmd.Dir = dir
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		exitCode := 0
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, errBuf.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("expected settings.json: %v", err)
+	}
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+	hooks := settings["hooks"].(map[string]any)
+	sessionStart := hooks["SessionStart"].([]any)
+	entry := sessionStart[0].(map[string]any)
+	innerHooks := entry["hooks"].([]any)
+	hook := innerHooks[0].(map[string]any)
+	command := hook["command"].(string)
+	if strings.Contains(command, "--repo") {
+		t.Errorf("expected hook command to NOT contain --repo when flag not supplied, got: %s", command)
+	}
+}
+
 func TestSkillsGenerate_Help_ShowsCustomOnlyFlag(t *testing.T) {
 	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
 	out, err := cmd.Output()
@@ -952,5 +1089,229 @@ func TestSkillsGenerate_Help_ShowsCustomOnlyFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "DOT_AI_SKILLS_CUSTOM_ONLY") {
 		t.Error("expected help to mention DOT_AI_SKILLS_CUSTOM_ONLY env var")
+	}
+}
+
+// --- PRD #12 M3+M4 tests ---
+
+// readSkillSource extracts the `source:` value from a SKILL.md frontmatter for
+// test assertions. Mirrors what the on-disk wipe logic reads — kept simple
+// rather than importing the internal helper.
+func readSkillSource(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	s := string(data)
+	if !strings.HasPrefix(s, "---\n") {
+		return ""
+	}
+	rest := s[len("---\n"):]
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return ""
+	}
+	for _, line := range strings.Split(rest[:end], "\n") {
+		if strings.HasPrefix(line, "source:") {
+			val := strings.TrimSpace(strings.TrimPrefix(line, "source:"))
+			val = strings.Trim(val, `"`)
+			return val
+		}
+	}
+	return ""
+}
+
+// Success Criteria #2: `--repo X` writes skills tagged `source: X`.
+func TestSkillsGenerate_M3_RepoFlag_TagsSourceFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	repo := "https://github.com/orgA/skills"
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--repo", repo)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	for _, name := range []string{"query", "troubleshoot-pod"} {
+		got := readSkillSource(t, filepath.Join(dir, "dot-ai-"+name, "SKILL.md"))
+		if got != repo {
+			t.Errorf("skill %s: expected source %q in frontmatter, got %q", name, repo, got)
+		}
+	}
+}
+
+// Success Criteria #3: skills from OTHER sources are left untouched by a
+// `--repo X` invocation. (Mock returns the same prompt set per repo, so we
+// pre-seed a uniquely-named skill that the server cannot produce.)
+func TestSkillsGenerate_M3_PreservesOtherSourceSkills(t *testing.T) {
+	dir := t.TempDir()
+	otherSource := "https://gitlab.corp/team/skills"
+	otherSkillDir := filepath.Join(dir, "dot-ai-team-only-skill")
+	if err := os.MkdirAll(otherSkillDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	otherSkillPath := filepath.Join(otherSkillDir, "SKILL.md")
+	otherContent := "---\nname: dot-ai-team-only-skill\ndescription: a foreign skill\nuser-invocable: true\nsource: \"" + otherSource + "\"\n---\n\nteam-only body\n"
+	if err := os.WriteFile(otherSkillPath, []byte(otherContent), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	repo := "https://github.com/orgA/skills"
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--repo", repo)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	gotContent, err := os.ReadFile(otherSkillPath)
+	if err != nil {
+		t.Fatalf("other-source skill must still exist: %v", err)
+	}
+	if string(gotContent) != otherContent {
+		t.Errorf("other-source skill content was modified; expected verbatim preservation.\nwant:\n%s\ngot:\n%s", otherContent, string(gotContent))
+	}
+
+	// Sanity: the new source's skills did get written.
+	if got := readSkillSource(t, filepath.Join(dir, "dot-ai-query", "SKILL.md")); got != repo {
+		t.Errorf("expected dot-ai-query tagged with %q, got %q", repo, got)
+	}
+}
+
+// Success Criteria #5: removing a skill upstream and re-running generate for
+// that source removes it from disk. (Mock returns a static prompt set, so we
+// pre-seed a stale skill tagged with the current source — the server doesn't
+// return it, so per-source wipe should drop it.)
+func TestSkillsGenerate_M3_RemovedUpstream_WipedOnRerun(t *testing.T) {
+	dir := t.TempDir()
+	repo := "https://github.com/orgA/skills"
+	staleDir := filepath.Join(dir, "dot-ai-removed-upstream-skill")
+	if err := os.MkdirAll(staleDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	staleContent := "---\nname: dot-ai-removed-upstream-skill\ndescription: was once upstream\nuser-invocable: true\nsource: \"" + repo + "\"\n---\n\nold body\n"
+	if err := os.WriteFile(filepath.Join(staleDir, "SKILL.md"), []byte(staleContent), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--repo", repo)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	if _, err := os.Stat(staleDir); !os.IsNotExist(err) {
+		t.Errorf("expected stale same-source skill to be wiped, but it still exists: %v", err)
+	}
+}
+
+// Success Criteria #4: cross-source name collisions skip + warn, first-source-wins.
+func TestSkillsGenerate_M4_CrossSourceCollision_SkipsAndWarns(t *testing.T) {
+	dir := t.TempDir()
+	repoA := "https://github.com/orgA/skills"
+	repoB := "https://gitlab.corp/team/skills"
+
+	// First invocation tags every prompt with repoA.
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir, "--repo", repoA)
+	if exitCode != 0 {
+		t.Fatalf("first run: expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+	if got := readSkillSource(t, filepath.Join(dir, "dot-ai-troubleshoot-pod", "SKILL.md")); got != repoA {
+		t.Fatalf("expected source=%q after first run, got %q", repoA, got)
+	}
+
+	// Second invocation with a different --repo collides on every name —
+	// the mock returns the same prompts under different sources.
+	_, stderr, exitCode = runCLI(t, "skills", "generate", "--path", dir, "--repo", repoB)
+	if exitCode != 0 {
+		t.Fatalf("second run: expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+
+	// Warning must be emitted, must name the surviving (first) source, must
+	// follow the documented format.
+	if !strings.Contains(stderr, "first-source-wins") {
+		t.Errorf("expected first-source-wins warning in stderr; got:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, repoA) {
+		t.Errorf("expected warning to name the surviving source %q; got stderr:\n%s", repoA, stderr)
+	}
+
+	// All prompt skills must remain tagged with repoA (first-source-wins).
+	for _, name := range []string{"troubleshoot-pod", "explain-resource", "security-review", "optimize-resources"} {
+		got := readSkillSource(t, filepath.Join(dir, "dot-ai-"+name, "SKILL.md"))
+		if got != repoA {
+			t.Errorf("skill %s: expected source still %q (first-source-wins), got %q", name, repoA, got)
+		}
+	}
+}
+
+// Success Criteria #6: concurrent invocations serialize via flock; the
+// contending invocation fails fast with the documented error.
+func TestSkillsGenerate_M4_FileLock_FailsFastOnContention(t *testing.T) {
+	dir := t.TempDir()
+	// Pre-acquire the lock from the test so the CLI subprocess can't get it.
+	lock := flock.New(filepath.Join(dir, ".dot-ai.lock"))
+	ok, err := lock.TryLock()
+	if err != nil {
+		t.Fatalf("lock setup: %v", err)
+	}
+	if !ok {
+		t.Fatalf("lock setup: TryLock returned false on empty dir")
+	}
+	defer lock.Unlock()
+
+	start := time.Now()
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir)
+	elapsed := time.Since(start)
+
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit when lock is held; got 0; stderr: %s", stderr)
+	}
+	if !strings.Contains(stderr, "another `dot-ai skills generate` is in progress") {
+		t.Errorf("expected documented contention error in stderr; got:\n%s", stderr)
+	}
+	// Sanity bound: should fail within ~5s + slack, not hang.
+	if elapsed > 15*time.Second {
+		t.Errorf("expected fast-fail within ~5s, took %s", elapsed)
+	}
+}
+
+// A1 (auditor hardening): readSkillSource must bound its read so a hostile
+// or accidentally huge SKILL.md cannot DoS the per-source scan. Pre-seed a
+// >64KiB SKILL.md, run generate, and confirm the rest of the scan still
+// works in bounded time.
+func TestSkillsGenerate_FrontmatterReadIsBounded(t *testing.T) {
+	dir := t.TempDir()
+
+	// Drop a >64KiB file in the skills dir, named like a real skill so the
+	// scanner picks it up. No frontmatter terminator is reachable within the
+	// 64KiB cap, so the scanner should treat it as untagged and move on.
+	hugeDir := filepath.Join(dir, "dot-ai-huge-skill")
+	if err := os.MkdirAll(hugeDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	junk := make([]byte, 256*1024) // 256 KiB
+	for i := range junk {
+		junk[i] = 'x'
+	}
+	huge := append([]byte("---\nname: dot-ai-huge-skill\n"), junk...)
+	if err := os.WriteFile(filepath.Join(hugeDir, "SKILL.md"), huge, 0o644); err != nil {
+		t.Fatalf("write huge: %v", err)
+	}
+
+	start := time.Now()
+	_, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir)
+	elapsed := time.Since(start)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr: %s", exitCode, stderr)
+	}
+	if elapsed > 10*time.Second {
+		t.Errorf("scan should complete in bounded time; took %s", elapsed)
+	}
+	// The legacy huge file lacked a closing `---`, so it's treated as untagged.
+	// Without --repo we wipe untagged → the huge dir should be gone.
+	if _, err := os.Stat(hugeDir); !os.IsNotExist(err) {
+		t.Errorf("expected oversized untagged skill to be wiped on env-var-path run; stat: %v", err)
+	}
+	// And the env-var path's skills should still be written.
+	if _, err := os.Stat(filepath.Join(dir, "dot-ai-query", "SKILL.md")); err != nil {
+		t.Errorf("expected env-var-path skills to be generated; missing dot-ai-query: %v", err)
 	}
 }

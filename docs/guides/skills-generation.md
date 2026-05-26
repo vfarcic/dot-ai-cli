@@ -147,7 +147,7 @@ For Claude Code, you can install a hook that automatically regenerates skills at
 dot-ai skills generate --agent claude-code --install-hook
 ```
 
-This adds a `SessionStart` hook to `.claude/settings.json` that runs `dot-ai skills generate --agent claude-code` on session startup. The hook captures the flags you pass — `--custom-only`, `--include`, and `--exclude` are forwarded so the hook reproduces the same behavior:
+This adds a `SessionStart` hook to `.claude/settings.json` that runs `dot-ai skills generate --agent claude-code` on session startup. The hook captures the flags you pass — `--custom-only`, `--include`, `--exclude`, and `--repo` are forwarded so the hook reproduces the same behavior:
 
 ```bash
 dot-ai skills generate --agent claude-code --install-hook --custom-only --exclude "debug-.*"
@@ -156,15 +156,131 @@ dot-ai skills generate --agent claude-code --install-hook --custom-only --exclud
 
 The hook is idempotent — running the command again with the same flags won't create duplicates. Re-running with different flags replaces the existing hook. It merges with any existing settings.
 
+To compose skills from multiple repos, install one hook per source:
+
+```bash
+dot-ai skills generate --agent claude-code --install-hook                                           # env-var repo
+dot-ai skills generate --agent claude-code --install-hook --repo https://github.com/orgA/skills    # org-wide
+dot-ai skills generate --agent claude-code --install-hook --repo https://gitlab.corp/team/skills   # team-private
+```
+
+Each invocation of `--install-hook` writes one hook scoped to its source. See
+[Composing Skills From Multiple Repositories](#composing-skills-from-multiple-repositories) for the full model.
+
 ## Updating Skills
 
-Re-running the command updates all `dot-ai-*` skills:
+Re-running the command updates the `dot-ai-*` skills owned by the current source:
 
 ```bash
 dot-ai skills generate --agent claude-code
 ```
 
-Existing `dot-ai-*` skills are deleted and regenerated with the latest server capabilities.
+Each generated skill carries a `source:` field in its YAML frontmatter
+recording which repo it came from (`built-in` for the server's configured
+default, or the repo URL passed via `--repo`). On every run, the CLI only
+wipes-and-replaces skills tagged with the *current* source — skills from other
+sources are left in place. This is what lets you compose skills from multiple
+repos via multiple invocations (see [Composing Skills From Multiple Repositories](#composing-skills-from-multiple-repositories)).
+
+## Composing Skills From Multiple Repositories
+
+The `--repo <url>` flag overrides the server's configured default prompts repo
+for one invocation:
+
+```bash
+dot-ai skills generate --agent claude-code --repo https://github.com/orgA/skills
+```
+
+Each invocation is **self-contained and source-scoped** — it fetches from a
+single repo, tags every generated skill with that repo's source identifier,
+and only manages files from that source. Composition across multiple sources
+is achieved by running the command multiple times — typically as one agent
+hook per source:
+
+```bash
+# Hook A: server's configured default repo (env-var DOT_AI_USER_PROMPTS_REPO on the server)
+dot-ai skills generate --agent claude-code
+
+# Hook B: explicit org-wide repo
+dot-ai skills generate --agent claude-code --repo https://github.com/orgA/skills
+
+# Hook C: a self-hosted team-private repo, with its own credentials in DOT_AI_GIT_TOKEN
+DOT_AI_GIT_TOKEN=$TEAM_TOKEN dot-ai skills generate --agent claude-code --repo https://gitlab.corp/team/skills
+```
+
+Each hook owns its slice. Per-source credentials, branches, and paths come
+from per-hook env vars — the hook is the scoping unit.
+
+When `--repo` is supplied, the CLI prints the source it received from the
+server, redacted of any userinfo for safety:
+
+```text
+Skills generated successfully in .claude/skills
+Source: https://github.com/orgA/skills
+```
+
+The no-flag invocation does not print a `Source:` line (it stays
+byte-for-byte equivalent to pre-multi-repo behavior).
+
+### Collision Policy (First-Source-Wins)
+
+If two sources expose a skill with the same name, the first invocation to
+write the skill wins; subsequent invocations skip the colliding name and log
+a warning to stderr:
+
+```text
+warning: skipping "query": already provided by source "https://github.com/orgA/skills" (first-source-wins)
+```
+
+The named "other source" is redacted before logging. To resolve a real
+collision, rename one of the skills upstream or drop one of the sources.
+
+### Concurrent Invocations
+
+If two hooks fire in parallel and both target the same skills directory, they
+serialize on an exclusive lock file (`<outDir>/.dot-ai.lock`). The first
+acquirer proceeds; the second waits briefly and, if the lock stays held, fails
+fast with:
+
+```text
+Error: another `dot-ai skills generate` is in progress
+```
+
+Re-run the second hook after the first finishes (or rely on the agent's hook
+runner to retry).
+
+### Source Frontmatter
+
+Every generated `SKILL.md` includes a `source:` field:
+
+```yaml
+---
+name: dot-ai-troubleshoot-pod
+description: Generate a troubleshooting guide for a pod
+user-invocable: true
+source: built-in
+---
+```
+
+The value comes verbatim from the server's response — `built-in` for the
+default repo, or the exact URL you passed to `--repo`. The CLI never modifies
+this value; it must match exactly between writes and subsequent wipes.
+
+### Legacy File Migration
+
+Skills generated by earlier versions of the CLI do not have a `source:` field.
+The first time you re-run `dot-ai skills generate` after upgrading:
+
+- **No `--repo`** (env-var path): untagged legacy skills are assumed to belong
+  to the env-var repo and are wiped as part of the normal per-source cleanup.
+  Same effect as the pre-multi-repo behavior.
+- **With `--repo X`**: untagged legacy files survive the per-source scan
+  (they don't belong to source `X`). If a new skill from source `X` collides
+  by name, the legacy file is overwritten. Subsequent runs without `--repo`
+  then sweep up any remaining legacy files.
+
+For most users, simply re-running the env-var-path invocation once after
+upgrade is enough to retag everything.
 
 ## How It Works
 
