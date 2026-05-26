@@ -20,8 +20,10 @@ const (
 )
 
 // BuildHookCommand constructs the hook command string from the resolved flags,
-// mirroring the arguments passed to `skills generate`.
-func BuildHookCommand(include, exclude string, customOnly bool) string {
+// mirroring the arguments passed to `skills generate`. When repo is non-empty
+// it is appended as --repo "<url>" so each hook firing remains scoped to the
+// same source (PRD #12 hook-per-source model).
+func BuildHookCommand(include, exclude string, customOnly bool, repo string) string {
 	cmd := hookCommandBase
 	if customOnly {
 		cmd += " --custom-only"
@@ -31,6 +33,9 @@ func BuildHookCommand(include, exclude string, customOnly bool) string {
 	}
 	if exclude != "" {
 		cmd += fmt.Sprintf(" --exclude %q", exclude)
+	}
+	if repo != "" {
+		cmd += fmt.Sprintf(" --repo %q", repo)
 	}
 	return cmd
 }
