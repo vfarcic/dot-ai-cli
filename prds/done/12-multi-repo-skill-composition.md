@@ -1,6 +1,6 @@
 # PRD #12: Multi-Repo Skill Composition via `--repo` Flag
 
-**Status:** Implemented (awaiting end-to-end verification + PR)
+**Status:** Complete (2026-06-06)
 **Related Issue:** [vfarcic/dot-ai #575](https://github.com/vfarcic/dot-ai/issues/575) (discussion); [vfarcic/dot-ai #581](https://github.com/vfarcic/dot-ai/issues/581) (server-side companion PRD)
 
 ## Problem Statement
