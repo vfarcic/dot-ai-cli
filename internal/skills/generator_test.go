@@ -28,7 +28,7 @@ func TestWritePromptSkill_SupportingFiles(t *testing.T) {
 		},
 	}
 
-	if err := writePromptSkill(dir, p, rendered); err != nil {
+	if err := writePromptSkill(dir, p, rendered, ""); err != nil {
 		t.Fatalf("writePromptSkill: %v", err)
 	}
 
@@ -79,7 +79,7 @@ func TestWritePromptSkill_NestedPath(t *testing.T) {
 		},
 	}
 
-	if err := writePromptSkill(dir, p, rendered); err != nil {
+	if err := writePromptSkill(dir, p, rendered, ""); err != nil {
 		t.Fatalf("writePromptSkill: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestWritePromptSkill_NoFiles(t *testing.T) {
 	}
 	// No files field set — zero value (empty slice).
 
-	if err := writePromptSkill(dir, p, rendered); err != nil {
+	if err := writePromptSkill(dir, p, rendered, ""); err != nil {
 		t.Fatalf("writePromptSkill: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestWritePromptSkill_NilRendered(t *testing.T) {
 
 	p := promptDef{Name: "nil-prompt", Description: "Prompt with nil render"}
 
-	if err := writePromptSkill(dir, p, nil); err != nil {
+	if err := writePromptSkill(dir, p, nil, ""); err != nil {
 		t.Fatalf("writePromptSkill: %v", err)
 	}
 
@@ -199,7 +199,7 @@ func TestWritePromptSkill_MultipleFiles(t *testing.T) {
 	}
 	rendered.Data.Files = files
 
-	if err := writePromptSkill(dir, p, rendered); err != nil {
+	if err := writePromptSkill(dir, p, rendered, ""); err != nil {
 		t.Fatalf("writePromptSkill: %v", err)
 	}
 
@@ -239,7 +239,7 @@ func TestWritePromptSkill_RewritesFileReferences(t *testing.T) {
 		},
 	}
 
-	if err := writePromptSkill(dir, p, rendered); err != nil {
+	if err := writePromptSkill(dir, p, rendered, ""); err != nil {
 		t.Fatalf("writePromptSkill: %v", err)
 	}
 
@@ -282,7 +282,7 @@ func TestWritePromptSkill_RewritesNestedFileReferences(t *testing.T) {
 		},
 	}
 
-	if err := writePromptSkill(dir, p, rendered); err != nil {
+	if err := writePromptSkill(dir, p, rendered, ""); err != nil {
 		t.Fatalf("writePromptSkill: %v", err)
 	}
 
@@ -316,7 +316,7 @@ func TestWritePromptSkill_InvalidBase64(t *testing.T) {
 		{Path: "bad.sh", Content: "!!!not-valid-base64!!!"},
 	}
 
-	err := writePromptSkill(dir, p, rendered)
+	err := writePromptSkill(dir, p, rendered, "")
 	if err == nil {
 		t.Fatal("expected error for invalid base64, got nil")
 	}
@@ -345,7 +345,7 @@ func TestWritePromptSkill_PathTraversalRejected(t *testing.T) {
 			rendered.Data.Files = []promptFile{
 				{Path: tc.path, Content: base64.StdEncoding.EncodeToString([]byte("echo nope"))},
 			}
-			err := writePromptSkill(dir, p, rendered)
+			err := writePromptSkill(dir, p, rendered, "")
 			if err == nil || !strings.Contains(err.Error(), "path traversal") {
 				t.Fatalf("expected path traversal error, got %v", err)
 			}

@@ -27,6 +27,7 @@ var skillsPullLatest bool
 var skillsInclude string
 var skillsExclude string
 var skillsCustomOnly bool
+var skillsRepo string
 
 var skillsCmd = &cobra.Command{
 	Use:   "skills",
@@ -42,8 +43,12 @@ files for the target agent. Each tool becomes a skill wrapping its CLI command.
 Each prompt becomes a skill containing the prompt instructions.
 
 Generated skills use a dot-ai- name prefix (e.g., dot-ai-query) and are placed
-in the agent's skills directory. Re-running deletes existing dot-ai-* skills
-and regenerates them.`,
+in the agent's skills directory. Each generated file is tagged with a
+'source:' frontmatter recording which repo it came from. Re-running scopes its
+wipe-and-replace to that source: skills from other sources are left untouched,
+and cross-source name collisions are skipped with a warning (first-source-wins).
+Compose multiple sources by running the command multiple times — typically as
+one agent hook per source.`,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if skillsAgent == "" && skillsPath == "" {
 			return fmt.Errorf("at least one of --agent or --path is required")
@@ -74,13 +79,19 @@ and regenerates them.`,
 		if err != nil {
 			return err
 		}
-		outDir, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, customOnly, RoutingSkill)
+		outDir, source, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, customOnly, RoutingSkill, skillsRepo)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Skills generated successfully in %s\n", outDir)
+		// Only emit Source when the user explicitly passed --repo; the no-flag
+		// path must remain byte-for-byte identical to the pre-PRD-12 output
+		// (Success Criteria #1).
+		if cmd.Flags().Changed("repo") && source != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "Source: %s\n", skills.RedactURL(source))
+		}
 		if skillsInstallHook {
-			hookCmd := skills.BuildHookCommand(include, exclude, customOnly)
+			hookCmd := skills.BuildHookCommand(include, exclude, customOnly, skillsRepo)
 			if err := skills.InstallSessionHook(hookCmd); err != nil {
 				return err
 			}
@@ -133,6 +144,7 @@ func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsInclude, "include", "", "Regex to filter skills to include (env: DOT_AI_SKILLS_INCLUDE)")
 	skillsGenerateCmd.Flags().StringVar(&skillsExclude, "exclude", "", "Regex to filter skills to exclude (env: DOT_AI_SKILLS_EXCLUDE)")
 	skillsGenerateCmd.Flags().BoolVar(&skillsCustomOnly, "custom-only", false, "Only generate custom prompt skills, skip MCP tool skills (env: DOT_AI_SKILLS_CUSTOM_ONLY)")
+	skillsGenerateCmd.Flags().StringVar(&skillsRepo, "repo", "", "Override the server's configured prompts repo for this invocation (passed through as ?repo=<url>). Default: server's env-var repo")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})

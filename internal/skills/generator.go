@@ -49,6 +49,7 @@ type promptsResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
 		Prompts []promptDef `json:"prompts"`
+		Source  string      `json:"source"`
 	} `json:"data"`
 }
 
@@ -135,27 +136,53 @@ func filterByName(names []string, include, exclude string) ([]string, error) {
 }
 
 // Generate fetches tools and prompts from the server and writes SKILL.md
-// files to the resolved output directory. Returns the output directory used.
-// include and exclude are optional regex patterns for filtering skills by name
-// (without the dot-ai- prefix). routingSkill is the embedded routing skill
-// content to write as dot-ai/SKILL.md.
-func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte) (string, error) {
+// files to the resolved output directory. Returns the output directory and
+// the source identifier returned by the server (e.g. "built-in" or the
+// supplied repo URL). include and exclude are optional regex patterns for
+// filtering skills by name (without the dot-ai- prefix). routingSkill is the
+// embedded routing skill content to write as dot-ai/SKILL.md. When repo is
+// non-empty, it is passed through to the server as ?repo=<url> on the prompts
+// list and render calls, overriding the server's configured default repo.
+//
+// Per PRD #12, Generate performs a per-source wipe-and-replace: only skills
+// whose `source:` frontmatter matches the current invocation's source are
+// removed before the fresh set is written. Skills from other sources are left
+// untouched. Cross-source name collisions are resolved first-source-wins with
+// a warning to stderr. An exclusive file lock on <outDir>/.dot-ai.lock
+// serializes concurrent invocations.
+func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte, repo string) (string, string, error) {
 	outDir, err := resolveDir(agent, path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
+
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return "", "", &client.RequestError{
+			Message:  fmt.Sprintf("Error: failed to create output directory %s: %v", outDir, err),
+			ExitCode: client.ExitToolError,
+		}
+	}
+
+	lock, err := acquireLock(outDir)
+	if err != nil {
+		return "", "", &client.RequestError{
+			Message:  fmt.Sprintf("Error: %v", err),
+			ExitCode: client.ExitToolError,
+		}
+	}
+	defer lock.Release()
 
 	var tools []toolDef
 	if !customOnly {
 		tools, err = fetchTools(cfg)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 
-	prompts, err := fetchPrompts(cfg)
+	prompts, source, err := fetchPrompts(cfg, repo)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	if include != "" || exclude != "" {
@@ -165,7 +192,7 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 		}
 		kept, err := filterByName(toolNames, include, exclude)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		keptSet := make(map[string]bool, len(kept))
 		for _, n := range kept {
@@ -185,7 +212,7 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 		}
 		kept, err = filterByName(promptNames, include, exclude)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		keptSet = make(map[string]bool, len(kept))
 		for _, n := range kept {
@@ -200,16 +227,38 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 		prompts = filteredPrompts
 	}
 
-	if err := cleanExisting(outDir); err != nil {
-		return "", &client.RequestError{
-			Message:  fmt.Sprintf("Error: failed to clean existing skills: %v", err),
+	existing, err := scanExistingSkills(outDir)
+	if err != nil {
+		return "", "", &client.RequestError{
+			Message:  fmt.Sprintf("Error: failed to scan existing skills: %v", err),
 			ExitCode: client.ExitToolError,
 		}
 	}
 
+	// Per-source wipe. Untagged legacy files are treated as belonging to the
+	// env-var repo (current source) only when --repo was NOT supplied; when
+	// the caller explicitly passed --repo, legacy files survive (they belong
+	// to a different source the caller hasn't claimed yet).
+	wipeUntagged := repo == ""
+	for name, sk := range existing {
+		if sk.Source == source || (wipeUntagged && sk.Source == "") {
+			if err := os.RemoveAll(sk.Path); err != nil {
+				return "", "", &client.RequestError{
+					Message:  fmt.Sprintf("Error: failed to clean existing skill %q: %v", name, err),
+					ExitCode: client.ExitToolError,
+				}
+			}
+			delete(existing, name)
+		}
+	}
+
 	for _, t := range tools {
-		if err := writeToolSkill(outDir, t); err != nil {
-			return "", &client.RequestError{
+		if other, ok := existing["dot-ai-"+t.Name]; ok && other.Source != "" && other.Source != source {
+			fmt.Fprintf(os.Stderr, "warning: skipping %q: already provided by source %q (first-source-wins)\n", t.Name, RedactURL(other.Source))
+			continue
+		}
+		if err := writeToolSkill(outDir, t, source); err != nil {
+			return "", "", &client.RequestError{
 				Message:  fmt.Sprintf("Error: failed to write skill for tool %q: %v", t.Name, err),
 				ExitCode: client.ExitToolError,
 			}
@@ -217,9 +266,13 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	}
 
 	for _, p := range prompts {
-		rendered := renderPrompt(cfg, p.Name)
-		if err := writePromptSkill(outDir, p, rendered); err != nil {
-			return "", &client.RequestError{
+		if other, ok := existing["dot-ai-"+p.Name]; ok && other.Source != "" && other.Source != source {
+			fmt.Fprintf(os.Stderr, "warning: skipping %q: already provided by source %q (first-source-wins)\n", p.Name, RedactURL(other.Source))
+			continue
+		}
+		rendered := renderPrompt(cfg, p.Name, repo)
+		if err := writePromptSkill(outDir, p, rendered, source); err != nil {
+			return "", "", &client.RequestError{
 				Message:  fmt.Sprintf("Error: failed to write skill for prompt %q: %v", p.Name, err),
 				ExitCode: client.ExitToolError,
 			}
@@ -227,13 +280,13 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	}
 
 	if err := writeRoutingSkill(outDir, routingSkill); err != nil {
-		return "", &client.RequestError{
+		return "", "", &client.RequestError{
 			Message:  fmt.Sprintf("Error: failed to write routing skill: %v", err),
 			ExitCode: client.ExitToolError,
 		}
 	}
 
-	return outDir, nil
+	return outDir, source, nil
 }
 
 func resolveDir(agent, path string) (string, error) {
@@ -265,25 +318,34 @@ func fetchTools(cfg *config.Config) ([]toolDef, error) {
 	return resp.Data.Tools, nil
 }
 
-func fetchPrompts(cfg *config.Config) ([]promptDef, error) {
-	body, err := client.Do(cfg, "GET", "/api/v1/prompts", nil)
+func fetchPrompts(cfg *config.Config, repo string) ([]promptDef, string, error) {
+	var params []client.Param
+	if repo != "" {
+		params = append(params, client.Param{Name: "repo", Value: repo, Location: "query"})
+	}
+	body, err := client.Do(cfg, "GET", "/api/v1/prompts", params)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var resp promptsResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, &client.RequestError{
+		return nil, "", &client.RequestError{
 			Message:  fmt.Sprintf("Error: failed to parse prompts response: %v", err),
 			ExitCode: client.ExitToolError,
 		}
 	}
-	return resp.Data.Prompts, nil
+	return resp.Data.Prompts, resp.Data.Source, nil
 }
 
 // renderPrompt attempts to fetch the rendered content of a prompt.
 // Returns nil if the render fails (e.g., required arguments missing).
-func renderPrompt(cfg *config.Config, name string) *promptRenderResponse {
-	body, err := client.Do(cfg, "POST", "/api/v1/prompts/"+url.PathEscape(name), nil)
+// When repo is non-empty, it is passed through as ?repo=<url>.
+func renderPrompt(cfg *config.Config, name, repo string) *promptRenderResponse {
+	var params []client.Param
+	if repo != "" {
+		params = append(params, client.Param{Name: "repo", Value: repo, Location: "query"})
+	}
+	body, err := client.Do(cfg, "POST", "/api/v1/prompts/"+url.PathEscape(name), params)
 	if err != nil {
 		return nil
 	}
@@ -294,27 +356,37 @@ func renderPrompt(cfg *config.Config, name string) *promptRenderResponse {
 	return &resp
 }
 
-// cleanExisting removes the dot-ai routing skill and all dot-ai-* directories
-// from the output path.
-func cleanExisting(dir string) error {
+// scanExistingSkills walks the output directory and returns a map of skill
+// directory name → existingSkill (path + source-from-frontmatter). Only
+// directories named dot-ai-* are returned; the routing skill ("dot-ai") and
+// the lock file are excluded.
+func scanExistingSkills(dir string) (map[string]existingSkill, error) {
+	out := map[string]existingSkill{}
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
-		return nil
+		return out, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, e := range entries {
-		if e.IsDir() && (e.Name() == "dot-ai" || strings.HasPrefix(e.Name(), "dot-ai-")) {
-			if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
-				return err
-			}
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == "dot-ai" || !strings.HasPrefix(name, "dot-ai-") {
+			continue
+		}
+		skillDir := filepath.Join(dir, name)
+		out[name] = existingSkill{
+			Path:   skillDir,
+			Source: readSkillSource(filepath.Join(skillDir, "SKILL.md")),
 		}
 	}
-	return nil
+	return out, nil
 }
 
-func writeToolSkill(dir string, t toolDef) error {
+func writeToolSkill(dir string, t toolDef, source string) error {
 	skillDir := filepath.Join(dir, "dot-ai-"+t.Name)
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return err
@@ -325,6 +397,9 @@ func writeToolSkill(dir string, t toolDef) error {
 	b.WriteString(fmt.Sprintf("name: dot-ai-%s\n", t.Name))
 	b.WriteString(fmt.Sprintf("description: %s\n", yamlEscape(t.Description)))
 	b.WriteString("user-invocable: true\n")
+	if source != "" {
+		b.WriteString(fmt.Sprintf("source: %s\n", yamlEscape(source)))
+	}
 	b.WriteString("---\n\n")
 
 	b.WriteString(fmt.Sprintf("# dot-ai %s\n\n", t.Name))
@@ -375,7 +450,7 @@ func writeToolSkill(dir string, t toolDef) error {
 	return os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(b.String()), 0o644)
 }
 
-func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse) error {
+func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse, source string) error {
 	skillDir := filepath.Join(dir, "dot-ai-"+p.Name)
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return err
@@ -390,6 +465,9 @@ func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse) e
 	}
 	b.WriteString(fmt.Sprintf("description: %s\n", yamlEscape(desc)))
 	b.WriteString("user-invocable: true\n")
+	if source != "" {
+		b.WriteString(fmt.Sprintf("source: %s\n", yamlEscape(source)))
+	}
 	b.WriteString("---\n\n")
 
 	// If we have rendered content, use the prompt messages directly.
@@ -481,6 +559,18 @@ func writeRoutingSkill(dir string, content []byte) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(skillDir, "SKILL.md"), content, 0o644)
+}
+
+// RedactURL strips userinfo (user:password@) from a URL string so that any
+// embedded credentials are not echoed to stdout, logs, or CI output. Returns
+// the input unchanged for non-URL values (e.g. "built-in") or parse failures.
+func RedactURL(s string) string {
+	u, err := url.Parse(s)
+	if err != nil || u.User == nil {
+		return s
+	}
+	u.User = nil
+	return u.String()
 }
 
 // yamlEscape wraps a string in quotes if it contains YAML-special characters.
