@@ -147,7 +147,7 @@ For Claude Code, you can install a hook that automatically regenerates skills at
 dot-ai skills generate --agent claude-code --install-hook
 ```
 
-This adds a `SessionStart` hook to `.claude/settings.json` that runs `dot-ai skills generate --agent claude-code` on session startup. The hook captures the flags you pass — `--custom-only`, `--include`, `--exclude`, and `--repo` are forwarded so the hook reproduces the same behavior:
+This adds a `SessionStart` hook to `.claude/settings.json` that runs `dot-ai skills generate --agent claude-code` on session startup. The hook captures the flags you pass — `--custom-only`, `--include`, `--exclude`, `--repo`, `--repo-path`, and `--repo-branch` are forwarded so the hook reproduces the same behavior. The `DOT_AI_GIT_TOKEN` credential is **never** written to `settings.json`; it is read from the environment each time the hook fires:
 
 ```bash
 dot-ai skills generate --agent claude-code --install-hook --custom-only --exclude "debug-.*"
@@ -208,8 +208,70 @@ dot-ai skills generate --agent claude-code --repo https://github.com/orgA/skills
 DOT_AI_GIT_TOKEN=$TEAM_TOKEN dot-ai skills generate --agent claude-code --repo https://gitlab.corp/team/skills
 ```
 
-Each hook owns its slice. Per-source credentials, branches, and paths come
-from per-hook env vars — the hook is the scoping unit.
+Each hook owns its slice. The hook is the scoping unit: each one points at one
+source and carries that source's subdirectory, branch, and credential.
+
+### Subdirectory, Branch, and Per-Source Credentials
+
+A `--repo` source does not have to live at the repo root on the default branch,
+and it does not have to share the server's git credential. Three additive,
+opt-in inputs qualify a `--repo` override:
+
+| Flag / env var | Sent as | Default when omitted |
+|----------------|---------|----------------------|
+| `--repo-path <subdir>` | override `path` (subdirectory within the repo) | repo root |
+| `--repo-branch <branch>` | override `branch` | `main` |
+| `DOT_AI_GIT_TOKEN` env var | `X-Dot-AI-Git-Token` request header | the server's own `DOT_AI_GIT_TOKEN` credential |
+
+```bash
+# Skills kept under skills/ on the team-skills branch of a private repo,
+# authenticated with this hook's own token (a different auth realm than the
+# server's default credential).
+DOT_AI_GIT_TOKEN=$TEAM_TOKEN dot-ai skills generate --agent claude-code \
+  --repo https://forgejo.example.com/team/skills \
+  --repo-path skills \
+  --repo-branch team-skills
+```
+
+Key rules:
+
+- **`--repo-path` / `--repo-branch` require `--repo`.** They qualify an
+  override, so supplying either without `--repo` is a usage error:
+  ```text
+  Error: --repo-path and --repo-branch require --repo
+  ```
+- **The credential is forwarded only on override requests.** When
+  `DOT_AI_GIT_TOKEN` is set in the environment **and** `--repo` is in use, the
+  CLI forwards it as the `X-Dot-AI-Git-Token` header — on every prompts request
+  the run makes — so the override repo is cloned with *that* token for that
+  request only. With no `--repo`, the token is never sent (it would be inert
+  server-side anyway). The token is a secret: it never appears in logs, command
+  output, or generated skill frontmatter.
+- **`source` is keyed on the repo URL only.** Adding a path, branch, or token
+  does not change the `source` value for a given repo, so skill tagging (and the
+  wipe-own-slice behavior) is unaffected.
+
+### Multi-Source Example
+
+Compose an org-wide public source with a private cross-realm source that lives
+in a subdirectory on a non-default branch — one hook each:
+
+```bash
+# Public, org-wide skills at the repo root on the default branch (no credential).
+dot-ai skills generate --agent claude-code \
+  --repo https://github.com/orgA/skills
+
+# Private skills in a different auth realm, under skills/ on the team-skills
+# branch, authenticated with this hook's own token.
+DOT_AI_GIT_TOKEN=$FORGEJO_TOKEN dot-ai skills generate --agent claude-code \
+  --repo https://forgejo.example.com/team/skills \
+  --repo-path skills \
+  --repo-branch team-skills
+```
+
+Each invocation is self-contained and source-scoped, so the two sets compose
+cleanly: the public run only manages skills tagged with its repo, and the
+private run only manages skills tagged with its repo.
 
 When `--repo` is supplied, the CLI prints the source it received from the
 server, redacted of any userinfo for safety:

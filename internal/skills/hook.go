@@ -11,19 +11,22 @@ import (
 )
 
 const (
-	settingsFile     = ".claude/settings.json"
-	hookCommandBase  = "dot-ai skills generate --agent claude-code"
+	settingsFile      = ".claude/settings.json"
+	hookCommandBase   = "dot-ai skills generate --agent claude-code"
 	hookCommandPrefix = "dot-ai skills generate"
-	hookMatcher      = "startup"
-	hookType         = "command"
-	hookEventKey     = "SessionStart"
+	hookMatcher       = "startup"
+	hookType          = "command"
+	hookEventKey      = "SessionStart"
 )
 
 // BuildHookCommand constructs the hook command string from the resolved flags,
-// mirroring the arguments passed to `skills generate`. When repo is non-empty
-// it is appended as --repo "<url>" so each hook firing remains scoped to the
-// same source (PRD #12 hook-per-source model).
-func BuildHookCommand(include, exclude string, customOnly bool, repo string) string {
+// mirroring the arguments passed to `skills generate`. When the override is
+// active it is appended as --repo/--repo-path/--repo-branch so each hook firing
+// remains scoped to the same source (PRD #12 hook-per-source model, extended in
+// PRD #16). The credential is intentionally NOT embedded: it is read from the
+// DOT_AI_GIT_TOKEN env var at hook-run time and must never be written to
+// settings.json.
+func BuildHookCommand(include, exclude string, customOnly bool, ov Override) string {
 	cmd := hookCommandBase
 	if customOnly {
 		cmd += " --custom-only"
@@ -34,8 +37,14 @@ func BuildHookCommand(include, exclude string, customOnly bool, repo string) str
 	if exclude != "" {
 		cmd += fmt.Sprintf(" --exclude %q", exclude)
 	}
-	if repo != "" {
-		cmd += fmt.Sprintf(" --repo %q", repo)
+	if ov.Repo != "" {
+		cmd += fmt.Sprintf(" --repo %q", ov.Repo)
+	}
+	if ov.Path != "" {
+		cmd += fmt.Sprintf(" --repo-path %q", ov.Path)
+	}
+	if ov.Branch != "" {
+		cmd += fmt.Sprintf(" --repo-branch %q", ov.Branch)
 	}
 	return cmd
 }

@@ -54,9 +54,9 @@ type promptsResponse struct {
 }
 
 type promptDef struct {
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Arguments   []argDef  `json:"arguments"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Arguments   []argDef `json:"arguments"`
 }
 
 type argDef struct {
@@ -90,11 +90,117 @@ type promptMsg struct {
 	} `json:"content"`
 }
 
+// gitTokenHeader is the request header that carries the per-request git
+// credential for a prompts-repo override. Its value is a secret and is never
+// logged, printed, or written to generated skill frontmatter.
+const gitTokenHeader = "X-Dot-AI-Git-Token"
+
+// Override carries the per-invocation prompts-repo override (PRD #15 +#16).
+// Repo is the override repo URL; Path and Branch optionally qualify it. Token
+// is the CLI host's DOT_AI_GIT_TOKEN, forwarded as the gitTokenHeader on
+// override requests only. All fields are optional; an Override is "active"
+// (sends override params/header) only when Repo is set.
+type Override struct {
+	Repo   string
+	Path   string
+	Branch string
+	Token  string
+}
+
+// active reports whether this override should attach repo/path/branch params
+// and the credential header. Path, Branch, and Token only qualify a repo
+// override — without a Repo they are inert (mirrors the server contract).
+func (o Override) active() bool { return o.Repo != "" }
+
+// queryParams returns repo/path/branch as query params for the prompts list
+// and render endpoints. Empty path/branch are omitted, so a Repo-only override
+// produces exactly the #15 wire format (?repo=<url>).
+func (o Override) queryParams() []client.Param {
+	if !o.active() {
+		return nil
+	}
+	params := []client.Param{{Name: "repo", Value: o.Repo, Location: "query"}}
+	if o.Path != "" {
+		params = append(params, client.Param{Name: "path", Value: o.Path, Location: "query"})
+	}
+	if o.Branch != "" {
+		params = append(params, client.Param{Name: "branch", Value: o.Branch, Location: "query"})
+	}
+	return params
+}
+
+// bodyParams returns repo/path/branch as JSON body fields for the refresh
+// endpoint (the contract places the override in the body there, not the query).
+func (o Override) bodyParams() []client.Param {
+	if !o.active() {
+		return nil
+	}
+	params := []client.Param{{Name: "repo", Value: o.Repo, Location: "body", ForceString: true}}
+	if o.Path != "" {
+		params = append(params, client.Param{Name: "path", Value: o.Path, Location: "body", ForceString: true})
+	}
+	if o.Branch != "" {
+		params = append(params, client.Param{Name: "branch", Value: o.Branch, Location: "body", ForceString: true})
+	}
+	return params
+}
+
+// headers returns the credential header, forwarded only when the override is
+// active and a token is set. A no-override run (or a run with no token) sends
+// no header — the header is inert server-side without a repo, so the CLI never
+// sends it on non-override requests.
+func (o Override) headers() map[string]string {
+	if !o.active() || o.Token == "" {
+		return nil
+	}
+	return map[string]string{gitTokenHeader: o.Token}
+}
+
+// sourceError reframes a request-scoped 4xx from an override request as an
+// actionable, per-source CLI error. The repo URL is redacted so an embedded
+// credential never reaches output, and the token is never part of the message.
+// Non-override errors and non-4xx errors pass through unchanged. A 401 is an
+// API-level auth failure against the dot-ai server itself (not a rejection of
+// the git source), so it also passes through unchanged rather than being
+// mislabeled as a source rejection.
+func sourceError(err error, o Override) error {
+	if !o.active() {
+		return err
+	}
+	re, ok := err.(*client.RequestError)
+	if !ok || re.Status < 400 || re.Status >= 500 || re.Status == 401 {
+		return err
+	}
+	msg := re.ServerMessage
+	if msg == "" {
+		msg = re.Message
+	}
+	return &client.RequestError{
+		Message:  fmt.Sprintf("Error: skills source %s rejected: %s", RedactURL(o.Repo), client.RedactCredentials(msg)),
+		ExitCode: re.ExitCode,
+		Status:   re.Status,
+	}
+}
+
 // RefreshPrompts asks the server to pull the latest prompts from the
-// configured git repository, busting the server-side cache.
-func RefreshPrompts(cfg *config.Config) error {
-	_, err := client.Do(cfg, "POST", "/api/v1/prompts/refresh", nil)
-	return err
+// configured git repository, busting the server-side cache. When the override
+// is active, repo/path/branch are sent as JSON body fields and the credential
+// as the gitTokenHeader (the refresh contract is body-based, not query-based).
+// It returns the number of prompts the server reports loading (0 if the server
+// did not report a count); a parse failure on an otherwise-successful refresh
+// is non-fatal and yields a count of 0.
+func RefreshPrompts(cfg *config.Config, ov Override) (int, error) {
+	body, err := client.DoWithHeaders(cfg, "POST", "/api/v1/prompts/refresh", ov.bodyParams(), ov.headers())
+	if err != nil {
+		return 0, sourceError(err, ov)
+	}
+	var resp struct {
+		Data struct {
+			PromptsLoaded int `json:"promptsLoaded"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	return resp.Data.PromptsLoaded, nil
 }
 
 // filterByName applies include/exclude regex patterns to a list of names.
@@ -140,9 +246,11 @@ func filterByName(names []string, include, exclude string) ([]string, error) {
 // the source identifier returned by the server (e.g. "built-in" or the
 // supplied repo URL). include and exclude are optional regex patterns for
 // filtering skills by name (without the dot-ai- prefix). routingSkill is the
-// embedded routing skill content to write as dot-ai/SKILL.md. When repo is
-// non-empty, it is passed through to the server as ?repo=<url> on the prompts
-// list and render calls, overriding the server's configured default repo.
+// embedded routing skill content to write as dot-ai/SKILL.md. The ov override
+// (PRD #15 + #16) is threaded onto every prompts request the run makes: when
+// active, repo/path/branch are sent as ?repo=&path=&branch= query params on the
+// prompts list and render calls, and the credential is forwarded as the
+// X-Dot-AI-Git-Token header — overriding the server's configured default repo.
 //
 // Per PRD #12, Generate performs a per-source wipe-and-replace: only skills
 // whose `source:` frontmatter matches the current invocation's source are
@@ -150,7 +258,7 @@ func filterByName(names []string, include, exclude string) ([]string, error) {
 // untouched. Cross-source name collisions are resolved first-source-wins with
 // a warning to stderr. An exclusive file lock on <outDir>/.dot-ai.lock
 // serializes concurrent invocations.
-func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte, repo string) (string, string, error) {
+func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte, ov Override) (string, string, error) {
 	outDir, err := resolveDir(agent, path)
 	if err != nil {
 		return "", "", err
@@ -180,7 +288,7 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 		}
 	}
 
-	prompts, source, err := fetchPrompts(cfg, repo)
+	prompts, source, err := fetchPrompts(cfg, ov)
 	if err != nil {
 		return "", "", err
 	}
@@ -239,7 +347,7 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	// env-var repo (current source) only when --repo was NOT supplied; when
 	// the caller explicitly passed --repo, legacy files survive (they belong
 	// to a different source the caller hasn't claimed yet).
-	wipeUntagged := repo == ""
+	wipeUntagged := !ov.active()
 	for name, sk := range existing {
 		if sk.Source == source || (wipeUntagged && sk.Source == "") {
 			if err := os.RemoveAll(sk.Path); err != nil {
@@ -270,7 +378,7 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 			fmt.Fprintf(os.Stderr, "warning: skipping %q: already provided by source %q (first-source-wins)\n", p.Name, RedactURL(other.Source))
 			continue
 		}
-		rendered := renderPrompt(cfg, p.Name, repo)
+		rendered := renderPrompt(cfg, p.Name, ov)
 		if err := writePromptSkill(outDir, p, rendered, source); err != nil {
 			return "", "", &client.RequestError{
 				Message:  fmt.Sprintf("Error: failed to write skill for prompt %q: %v", p.Name, err),
@@ -318,14 +426,10 @@ func fetchTools(cfg *config.Config) ([]toolDef, error) {
 	return resp.Data.Tools, nil
 }
 
-func fetchPrompts(cfg *config.Config, repo string) ([]promptDef, string, error) {
-	var params []client.Param
-	if repo != "" {
-		params = append(params, client.Param{Name: "repo", Value: repo, Location: "query"})
-	}
-	body, err := client.Do(cfg, "GET", "/api/v1/prompts", params)
+func fetchPrompts(cfg *config.Config, ov Override) ([]promptDef, string, error) {
+	body, err := client.DoWithHeaders(cfg, "GET", "/api/v1/prompts", ov.queryParams(), ov.headers())
 	if err != nil {
-		return nil, "", err
+		return nil, "", sourceError(err, ov)
 	}
 	var resp promptsResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -339,13 +443,11 @@ func fetchPrompts(cfg *config.Config, repo string) ([]promptDef, string, error) 
 
 // renderPrompt attempts to fetch the rendered content of a prompt.
 // Returns nil if the render fails (e.g., required arguments missing).
-// When repo is non-empty, it is passed through as ?repo=<url>.
-func renderPrompt(cfg *config.Config, name, repo string) *promptRenderResponse {
-	var params []client.Param
-	if repo != "" {
-		params = append(params, client.Param{Name: "repo", Value: repo, Location: "query"})
-	}
-	body, err := client.Do(cfg, "POST", "/api/v1/prompts/"+url.PathEscape(name), params)
+// The active override is threaded through as ?repo=&path=&branch= query params
+// plus the credential header, so each render call is scoped to the same source
+// as the list call.
+func renderPrompt(cfg *config.Config, name string, ov Override) *promptRenderResponse {
+	body, err := client.DoWithHeaders(cfg, "POST", "/api/v1/prompts/"+url.PathEscape(name), ov.queryParams(), ov.headers())
 	if err != nil {
 		return nil
 	}
