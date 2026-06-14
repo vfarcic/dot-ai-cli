@@ -511,6 +511,77 @@ func TestSkillsGenerate_Override_NoSecretLeakage(t *testing.T) {
 	}
 }
 
+// Finding 1 (PRD #16): a render-path (POST /api/v1/prompts/:name) override 4xx
+// must NOT be silently swallowed. The list call succeeds, but the render call
+// is rejected with a request-scoped 400 whose message embeds a percent-encoded
+// credential. The CLI must (a) emit a per-source warning naming the repo, (b)
+// continue the run (exit 0) falling back to metadata-only output for that
+// prompt, and (c) leak neither the header token nor the embedded credential —
+// the encoded-credential URL (no literal ':') exercises the Finding-2 regex too.
+func TestSkillsGenerate_Override_RenderPath4xx_PerSourceWarning(t *testing.T) {
+	const (
+		repo        = "https://github.com/orgA/skills"
+		token       = "HEADERTOK-no-leak-321"
+		msgSecret   = "SECRETLEAK987"
+		credInMsg   = "https://USERTOK%3A" + msgSecret + "@github.com/orgA/skills"
+		renderError = `{"success":false,"error":{"code":"VALIDATION_ERROR","message":"override clone failed for ` + credInMsg + `: unauthorized"}}`
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/prompts":
+			io.WriteString(w, `{"success":true,"data":{"prompts":[{"name":"p1","description":"p1 desc"}],"source":`+jsonString(r.URL.Query().Get("repo"))+`}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/prompts/p1":
+			// Request-scoped rejection of the render call only.
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, renderError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, `{"success":false,"error":{"code":"NOT_FOUND","message":"no route"}}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+	stdout, stderr, exitCode := runCLIAtServer(t, srv.URL, []string{"DOT_AI_GIT_TOKEN=" + token},
+		"skills", "generate", "--path", dir, "--custom-only",
+		"--repo", repo, "--repo-path", "skills", "--repo-branch", "team-skills")
+
+	// warn-and-continue: a single render failing must not abort the run.
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0 (warn-and-continue), got %d; stderr: %s", exitCode, stderr)
+	}
+
+	// The failure is surfaced as an actionable per-source warning, not swallowed.
+	combined := stdout + stderr
+	for _, want := range []string{"skills source", repo, "rejected"} {
+		if !strings.Contains(combined, want) {
+			t.Errorf("expected per-source render warning containing %q, got: %s", want, combined)
+		}
+	}
+
+	// No secret may leak: neither the header token nor the embedded credential
+	// (encoded-colon form — only the Finding-2 regex catches it).
+	for _, secret := range []string{token, msgSecret, "USERTOK%3A" + msgSecret} {
+		if strings.Contains(combined, secret) {
+			t.Errorf("secret %q leaked into CLI output: %s", secret, combined)
+		}
+	}
+
+	// The prompt still produced metadata-only output (render fell back, not skipped).
+	content, err := os.ReadFile(filepath.Join(dir, "dot-ai-p1", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("expected metadata-fallback skill for p1 after render failure: %v", err)
+	}
+	if !strings.Contains(string(content), "p1") {
+		t.Errorf("expected metadata fallback to document the prompt, got:\n%s", content)
+	}
+	if strings.Contains(string(content), msgSecret) {
+		t.Errorf("embedded credential leaked into generated file: %s", content)
+	}
+}
+
 func TestSkillsGenerate_RepoPathBranch_InHelp(t *testing.T) {
 	cmd := exec.Command(binaryPath, "skills", "generate", "--help")
 	out, err := cmd.Output()

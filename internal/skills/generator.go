@@ -378,7 +378,22 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 			fmt.Fprintf(os.Stderr, "warning: skipping %q: already provided by source %q (first-source-wins)\n", p.Name, RedactURL(other.Source))
 			continue
 		}
-		rendered := renderPrompt(cfg, p.Name, ov)
+		rendered, rerr := renderPrompt(cfg, p.Name, ov)
+		if rerr != nil {
+			// Never fail silently. A request-scoped override 4xx is reframed by
+			// sourceError into an actionable "skills source <repo> rejected: ..."
+			// message (repo URL + any embedded credential redacted); every other
+			// failure — a non-override per-prompt error (e.g. missing required
+			// args), a transient 5xx, an API 401, a connection error, or a parse
+			// failure — passes through with its own message. We warn-and-continue
+			// rather than abort so a single prompt failing does not sink the run,
+			// then fall back to metadata-only output below (rendered == nil).
+			// RedactCredentials is applied defensively so no token or
+			// credentialed URL can leak to stderr even if a message slipped past
+			// the server's own scrubbing.
+			warn := client.RedactCredentials(sourceError(rerr, ov).Error())
+			fmt.Fprintf(os.Stderr, "warning: failed to render prompt %q: %s\n", p.Name, warn)
+		}
 		if err := writePromptSkill(outDir, p, rendered, source); err != nil {
 			return "", "", &client.RequestError{
 				Message:  fmt.Sprintf("Error: failed to write skill for prompt %q: %v", p.Name, err),
@@ -441,21 +456,25 @@ func fetchPrompts(cfg *config.Config, ov Override) ([]promptDef, string, error) 
 	return resp.Data.Prompts, resp.Data.Source, nil
 }
 
-// renderPrompt attempts to fetch the rendered content of a prompt.
-// Returns nil if the render fails (e.g., required arguments missing).
-// The active override is threaded through as ?repo=&path=&branch= query params
-// plus the credential header, so each render call is scoped to the same source
-// as the list call.
-func renderPrompt(cfg *config.Config, name string, ov Override) *promptRenderResponse {
+// renderPrompt attempts to fetch the rendered content of a prompt. It returns
+// the parsed response, or a nil response together with the underlying error so
+// the caller can decide how to handle it (e.g. a request-scoped override 4xx
+// must be surfaced, not silently swallowed — PRD #16). The active override is
+// threaded through as ?repo=&path=&branch= query params plus the credential
+// header, so each render call is scoped to the same source as the list call.
+func renderPrompt(cfg *config.Config, name string, ov Override) (*promptRenderResponse, error) {
 	body, err := client.DoWithHeaders(cfg, "POST", "/api/v1/prompts/"+url.PathEscape(name), ov.queryParams(), ov.headers())
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var resp promptRenderResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil
+		return nil, &client.RequestError{
+			Message:  fmt.Sprintf("Error: failed to parse render response for prompt %q: %v", name, err),
+			ExitCode: client.ExitToolError,
+		}
 	}
-	return &resp
+	return &resp, nil
 }
 
 // scanExistingSkills walks the output directory and returns a map of skill

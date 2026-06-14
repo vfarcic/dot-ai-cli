@@ -277,15 +277,22 @@ func parseServerMessage(body []byte) string {
 	return RedactCredentials(env.Message)
 }
 
-// credInURLRe matches userinfo (user:password@) embedded in a URL anywhere
-// inside a larger string, so credentials can be scrubbed even when a whole-URL
-// parse is not possible (e.g. a URL embedded in a server-supplied message).
-var credInURLRe = regexp.MustCompile(`://[^/@\s]+:[^/@\s]+@`)
+// credInURLRe matches userinfo embedded in a URL anywhere inside a larger
+// string, so credentials can be scrubbed even when a whole-URL parse is not
+// possible (e.g. a URL embedded in a server-supplied message). The userinfo
+// segment is one-or-more chars that are not `/`, `@`, or whitespace, which
+// already admits percent-encoded octets (`%40`, `%3A`, ...). The password
+// group (`:...`) is OPTIONAL so the regex also covers username-only PAT URLs
+// (`https://TOKEN@host`) and creds whose separating colon is itself percent-
+// encoded (`https://user%3Apass@host`) — both of which a mandatory `:pass`
+// group would let slip through unredacted.
+var credInURLRe = regexp.MustCompile(`://[^/@\s]+(?::[^/@\s]*)?@`)
 
-// RedactCredentials strips userinfo (user:password@) from any URL embedded in s,
-// replacing it with ://***:***@. Unlike a whole-string URL redaction, it works
-// on free-text messages that merely contain a credentialed URL. It is a no-op
-// for strings without an embedded credential and is idempotent.
+// RedactCredentials strips userinfo (user:password@, or a bare token@) from any
+// URL embedded in s, replacing it with ://***:***@. Unlike a whole-string URL
+// redaction, it works on free-text messages that merely contain a credentialed
+// URL. It is a no-op for strings without an embedded credential and is
+// idempotent (re-redacting an already-redacted string yields the same string).
 func RedactCredentials(s string) string {
 	return credInURLRe.ReplaceAllString(s, "://***:***@")
 }
