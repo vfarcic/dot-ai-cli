@@ -21,8 +21,8 @@
       "agent-new":          ["claude"],
       "agent-orchestrator": ["claude --model opus"],
       "agent-coder":        ["claude --model opus"],
-      "agent-reviewer":     ["opencode --model opus"],
-      "agent-auditor":      ["opencode --model opus"],
+      "agent-reviewer":     ["claude --model opus"],
+      "agent-auditor":      ["claude --model opus"],
       "agent-releaser":     ["claude --model sonnet"]
     }
   }

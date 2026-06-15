@@ -28,6 +28,12 @@ var skillsInclude string
 var skillsExclude string
 var skillsCustomOnly bool
 var skillsRepo string
+var skillsRepoPath string
+var skillsRepoBranch string
+
+// gitTokenEnvVar is the CLI host env var whose value is forwarded as the
+// X-Dot-AI-Git-Token header on prompts-override requests when --repo is in use.
+const gitTokenEnvVar = "DOT_AI_GIT_TOKEN"
 
 var skillsCmd = &cobra.Command{
 	Use:   "skills",
@@ -66,20 +72,32 @@ one agent hook per source.`,
 				return fmt.Errorf("--install-hook cannot be used with --path")
 			}
 		}
+		// --repo-path / --repo-branch only qualify a repo override; they are
+		// meaningless (and silently ignored server-side) without --repo, so
+		// reject that combination as a usage error.
+		if (skillsRepoPath != "" || skillsRepoBranch != "") && skillsRepo == "" {
+			return fmt.Errorf("--repo-path and --repo-branch require --repo")
+		}
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ov := buildOverride()
 		if skillsPullLatest {
-			if err := skills.RefreshPrompts(GetConfig()); err != nil {
+			loaded, err := skills.RefreshPrompts(GetConfig(), ov)
+			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Server skills cache refreshed")
+			if loaded > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Server skills cache refreshed (%d prompts loaded)\n", loaded)
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "Server skills cache refreshed")
+			}
 		}
 		include, exclude, customOnly, err := resolveSkillFilters(cmd)
 		if err != nil {
 			return err
 		}
-		outDir, source, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, customOnly, RoutingSkill, skillsRepo)
+		outDir, source, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, customOnly, RoutingSkill, ov)
 		if err != nil {
 			return err
 		}
@@ -91,7 +109,7 @@ one agent hook per source.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "Source: %s\n", skills.RedactURL(source))
 		}
 		if skillsInstallHook {
-			hookCmd := skills.BuildHookCommand(include, exclude, customOnly, skillsRepo)
+			hookCmd := skills.BuildHookCommand(include, exclude, customOnly, ov)
 			if err := skills.InstallSessionHook(hookCmd); err != nil {
 				return err
 			}
@@ -99,6 +117,21 @@ one agent hook per source.`,
 		}
 		return nil
 	},
+}
+
+// buildOverride assembles the prompts-repo override from the resolved flags.
+// The credential is read from DOT_AI_GIT_TOKEN only when --repo is in use, so
+// it is never carried (let alone forwarded) on a non-override run.
+func buildOverride() skills.Override {
+	ov := skills.Override{
+		Repo:   skillsRepo,
+		Path:   strings.TrimSpace(skillsRepoPath),
+		Branch: strings.TrimSpace(skillsRepoBranch),
+	}
+	if skillsRepo != "" {
+		ov.Token = os.Getenv(gitTokenEnvVar)
+	}
+	return ov
 }
 
 // resolveSkillFilters applies the standard 4-tier precedence for skill filters:
@@ -144,7 +177,9 @@ func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsInclude, "include", "", "Regex to filter skills to include (env: DOT_AI_SKILLS_INCLUDE)")
 	skillsGenerateCmd.Flags().StringVar(&skillsExclude, "exclude", "", "Regex to filter skills to exclude (env: DOT_AI_SKILLS_EXCLUDE)")
 	skillsGenerateCmd.Flags().BoolVar(&skillsCustomOnly, "custom-only", false, "Only generate custom prompt skills, skip MCP tool skills (env: DOT_AI_SKILLS_CUSTOM_ONLY)")
-	skillsGenerateCmd.Flags().StringVar(&skillsRepo, "repo", "", "Override the server's configured prompts repo for this invocation (passed through as ?repo=<url>). Default: server's env-var repo")
+	skillsGenerateCmd.Flags().StringVar(&skillsRepo, "repo", "", "Override the server's configured prompts repo for this invocation (passed through as ?repo=<url>). Default: server's env-var repo. When --repo points at a private cross-realm source, set DOT_AI_GIT_TOKEN in the environment to authenticate the clone; it is forwarded as the X-Dot-AI-Git-Token header on override requests only and is never logged or written to skills.")
+	skillsGenerateCmd.Flags().StringVar(&skillsRepoPath, "repo-path", "", "Subdirectory within --repo to read skills from (passed through as ?path=<subdir>). Requires --repo. Default: repo root")
+	skillsGenerateCmd.Flags().StringVar(&skillsRepoBranch, "repo-branch", "", "Branch of --repo to read skills from (passed through as ?branch=<branch>). Requires --repo. Default: main")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})

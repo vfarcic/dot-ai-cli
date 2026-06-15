@@ -120,8 +120,13 @@ Settings are applied in this order (highest to lowest priority):
 | Skills include | `--include` | `DOT_AI_SKILLS_INCLUDE` | `settings.json` `skills_include` | none |
 | Skills exclude | `--exclude` | `DOT_AI_SKILLS_EXCLUDE` | `settings.json` `skills_exclude` | none |
 | Skills custom only | `--custom-only` | `DOT_AI_SKILLS_CUSTOM_ONLY` | `settings.json` `skills_custom_only` | none |
+| Skills repo path | `--repo-path` | — | — | repo root |
+| Skills repo branch | `--repo-branch` | — | — | `main` |
+| Prompts-override git credential | — | `DOT_AI_GIT_TOKEN` | — | server's own credential |
 
 For auth tokens specifically, `auth_token` (static) takes priority over `access_token` (OAuth) in the credentials file. Expired OAuth tokens are skipped.
+
+`DOT_AI_GIT_TOKEN` is distinct from the `--token` / `DOT_AI_AUTH_TOKEN` auth token: it is **not** the CLI's API auth. It is the git credential used to clone a `dot-ai skills generate --repo` source, forwarded to the server as the `X-Dot-AI-Git-Token` header **only** when `--repo` is in use. It is never sent on non-override requests and never appears in logs, output, or generated skills. See [Subdirectory, Branch, and Per-Source Credentials](../guides/skills-generation.md#subdirectory-branch-and-per-source-credentials).
 
 ## Example Configuration
 
