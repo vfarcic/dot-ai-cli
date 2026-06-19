@@ -30,6 +30,9 @@ var skillsCustomOnly bool
 var skillsRepo string
 var skillsRepoPath string
 var skillsRepoBranch string
+var skillsRepoFetch string
+var skillsRepoDir string
+var skillsSourceLabel string
 
 // gitTokenEnvVar is the CLI host env var whose value is forwarded as the
 // X-Dot-AI-Git-Token header on prompts-override requests when --repo is in use.
@@ -72,15 +75,50 @@ one agent hook per source.`,
 				return fmt.Errorf("--install-hook cannot be used with --path")
 			}
 		}
-		// --repo-path / --repo-branch only qualify a repo override; they are
-		// meaningless (and silently ignored server-side) without --repo, so
-		// reject that combination as a usage error.
-		if (skillsRepoPath != "" || skillsRepoBranch != "") && skillsRepo == "" {
-			return fmt.Errorf("--repo-path and --repo-branch require --repo")
+		// At most one source flag may be supplied per invocation; --repo,
+		// --repo-fetch, and --repo-dir each describe a complete, distinct
+		// source, so combining them is ambiguous. Name the conflicting flags.
+		var sourceFlags []string
+		if skillsRepo != "" {
+			sourceFlags = append(sourceFlags, "--repo")
+		}
+		if skillsRepoFetch != "" {
+			sourceFlags = append(sourceFlags, "--repo-fetch")
+		}
+		if skillsRepoDir != "" {
+			sourceFlags = append(sourceFlags, "--repo-dir")
+		}
+		if len(sourceFlags) > 1 {
+			return fmt.Errorf("%s are mutually exclusive; specify only one source", strings.Join(sourceFlags, ", "))
+		}
+		// --repo-dir and --source-label are companions: a local directory is not
+		// a stable cross-machine identifier, so it needs an explicit label, and a
+		// label is meaningless without a directory to apply it to.
+		if skillsRepoDir != "" && skillsSourceLabel == "" {
+			return fmt.Errorf("--repo-dir requires --source-label")
+		}
+		if skillsSourceLabel != "" && skillsRepoDir == "" {
+			return fmt.Errorf("--source-label requires --repo-dir")
+		}
+		// --repo-path / --repo-branch only qualify a repo-bearing source
+		// (--repo or --repo-fetch). They are meaningless without one, and a
+		// local --repo-dir takes no subdir/branch qualifier, so reject either
+		// of those combinations as a usage error.
+		if (skillsRepoPath != "" || skillsRepoBranch != "") && skillsRepo == "" && skillsRepoFetch == "" {
+			return fmt.Errorf("--repo-path and --repo-branch require --repo or --repo-fetch")
 		}
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// M1 defines and validates these source flags but does not yet wire up
+		// the CLI-side clone/read + upload path. Fail honestly rather than
+		// silently ignoring them; M2/M3 replace these stubs with the real path.
+		if skillsRepoDir != "" {
+			return fmt.Errorf("--repo-dir is not yet implemented (PRD #13 M2)")
+		}
+		if skillsRepoFetch != "" {
+			return fmt.Errorf("--repo-fetch is not yet implemented (PRD #13 M3)")
+		}
 		ov := buildOverride()
 		if skillsPullLatest {
 			loaded, err := skills.RefreshPrompts(GetConfig(), ov)
@@ -178,8 +216,11 @@ func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsExclude, "exclude", "", "Regex to filter skills to exclude (env: DOT_AI_SKILLS_EXCLUDE)")
 	skillsGenerateCmd.Flags().BoolVar(&skillsCustomOnly, "custom-only", false, "Only generate custom prompt skills, skip MCP tool skills (env: DOT_AI_SKILLS_CUSTOM_ONLY)")
 	skillsGenerateCmd.Flags().StringVar(&skillsRepo, "repo", "", "Override the server's configured prompts repo for this invocation (passed through as ?repo=<url>). Default: server's env-var repo. When --repo points at a private cross-realm source, set DOT_AI_GIT_TOKEN in the environment to authenticate the clone; it is forwarded as the X-Dot-AI-Git-Token header on override requests only and is never logged or written to skills.")
-	skillsGenerateCmd.Flags().StringVar(&skillsRepoPath, "repo-path", "", "Subdirectory within --repo to read skills from (passed through as ?path=<subdir>). Requires --repo. Default: repo root")
-	skillsGenerateCmd.Flags().StringVar(&skillsRepoBranch, "repo-branch", "", "Branch of --repo to read skills from (passed through as ?branch=<branch>). Requires --repo. Default: main")
+	skillsGenerateCmd.Flags().StringVar(&skillsRepoPath, "repo-path", "", "Subdirectory within --repo to read skills from (passed through as ?path=<subdir>). Requires --repo or --repo-fetch. Default: repo root")
+	skillsGenerateCmd.Flags().StringVar(&skillsRepoBranch, "repo-branch", "", "Branch of --repo to read skills from (passed through as ?branch=<branch>). Requires --repo or --repo-fetch. Default: main")
+	skillsGenerateCmd.Flags().StringVar(&skillsRepoFetch, "repo-fetch", "", "Clone this git repo from the CLI host (using the host's local git stack) and upload it as the skill source for this invocation — for sources the server cannot reach (e.g. SSO/device-attested VPNs). Accepts optional --repo-path/--repo-branch. Mutually exclusive with --repo and --repo-dir. (clone/upload lands in PRD #13 M3)")
+	skillsGenerateCmd.Flags().StringVar(&skillsRepoDir, "repo-dir", "", "Read skills from a local directory and upload them as the skill source for this invocation (no network, no clone). Requires --source-label. Mutually exclusive with --repo and --repo-fetch. (read/upload lands in PRD #13 M2)")
+	skillsGenerateCmd.Flags().StringVar(&skillsSourceLabel, "source-label", "", "Stable identifier for the --repo-dir source; generated skills are tagged with 'source: local:<label>'. Required with --repo-dir.")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})

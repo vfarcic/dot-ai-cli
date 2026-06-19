@@ -1,6 +1,6 @@
 services:
   mock-server:
-    image: ghcr.io/vfarcic/dot-ai-mock-server@sha256:a32e2b75c7f1178723ef21611c7889ecd12e38c9d460154890d525956c7793d4
+    image: ghcr.io/vfarcic/dot-ai-mock-server@sha256:97b9bee85c7630677ad38990aaee93552805f7a7abff9c8f8238799fb8f41521
     pull_policy: always
     ports:
       - "3001:3001"
