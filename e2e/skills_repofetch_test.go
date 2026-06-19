@@ -124,20 +124,9 @@ func TestSkillsGenerate_RepoFetch_AllowsPathBranch(t *testing.T) {
 	}
 }
 
-// --repo-dir validation passes (dir + --source-label), so the run reaches the
-// honest M2 not-implemented stub — symmetric with the M3 --repo-fetch coverage
-// above. t.TempDir() supplies a real directory so validation never short-circuits.
-func TestSkillsGenerate_RepoDir_M2Stub(t *testing.T) {
-	repoDir := t.TempDir()
-	stdout, stderr, exitCode := runCLI(t, "skills", "generate", "--agent", "claude-code", "--repo-dir", repoDir, "--source-label", "foo")
-	if exitCode == 0 {
-		t.Fatalf("expected non-zero exit from the --repo-dir M2 stub; stdout: %s stderr: %s", stdout, stderr)
-	}
-	combined := stdout + stderr
-	if !strings.Contains(combined, "not yet implemented") || !strings.Contains(combined, "M2") {
-		t.Errorf("expected the --repo-dir 'not yet implemented' M2 stub, got: %s", combined)
-	}
-}
+// --repo-dir end-to-end behavior (read, upload, ?source= render, security
+// posture) is covered in skills_repodir_test.go now that M2 is implemented; the
+// "not yet implemented" stub it used to hit is gone.
 
 // --repo-path / --repo-branch must be rejected with --repo-dir: a local
 // directory takes no subdir/branch qualifier. The qualifier error (not the M2
@@ -161,6 +150,56 @@ func TestSkillsGenerate_RepoDir_RejectsPathBranch(t *testing.T) {
 			combined := stdout + stderr
 			if !strings.Contains(combined, "require --repo or --repo-fetch") {
 				t.Errorf("expected qualifier error (a dir takes no path/branch), got: %s", combined)
+			}
+		})
+	}
+}
+
+// Guard: --install-hook with --repo-dir is refused until M5. BuildHookCommand
+// does not yet emit the source flag, so an installed hook would regenerate
+// without the source — silently broken. The error must name PRD #13 M5.
+func TestSkillsGenerate_RepoDir_InstallHookRejected(t *testing.T) {
+	stdout, stderr, exitCode := runCLI(t, "skills", "generate", "--agent", "claude-code",
+		"--install-hook", "--repo-dir", "/some/skills/dir", "--source-label", "foo")
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit for --install-hook with --repo-dir; stdout: %s stderr: %s", stdout, stderr)
+	}
+	combined := stdout + stderr
+	if !strings.Contains(combined, "--install-hook") || !strings.Contains(combined, "M5") {
+		t.Errorf("expected an --install-hook M5 not-supported error, got: %s", combined)
+	}
+}
+
+// Guard: --pull-latest with --repo-dir is refused — --pull-latest forces a
+// server-side git pull, which is meaningless for an uploaded local source.
+func TestSkillsGenerate_RepoDir_PullLatestRejected(t *testing.T) {
+	dir := t.TempDir()
+	stdout, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir,
+		"--pull-latest", "--repo-dir", "/some/skills/dir", "--source-label", "foo")
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit for --pull-latest with --repo-dir; stdout: %s stderr: %s", stdout, stderr)
+	}
+	combined := stdout + stderr
+	if !strings.Contains(combined, "--pull-latest") || !strings.Contains(combined, "--repo-dir") {
+		t.Errorf("expected a --pull-latest/--repo-dir incompatibility error, got: %s", combined)
+	}
+}
+
+// Validation: a --source-label with characters outside [A-Za-z0-9._-] is refused
+// with a clear usage error (it becomes a server-stored identifier and feeds the
+// local:<user>-<label> prefix).
+func TestSkillsGenerate_SourceLabel_InvalidCharset(t *testing.T) {
+	for _, label := range []string{"bad/label", "has space", "with:colon"} {
+		t.Run(label, func(t *testing.T) {
+			dir := t.TempDir()
+			stdout, stderr, exitCode := runCLI(t, "skills", "generate", "--path", dir,
+				"--repo-dir", "/some/skills/dir", "--source-label", label)
+			if exitCode == 0 {
+				t.Fatalf("expected non-zero exit for invalid --source-label %q; stdout: %s stderr: %s", label, stdout, stderr)
+			}
+			combined := stdout + stderr
+			if !strings.Contains(combined, "--source-label") || !strings.Contains(combined, "invalid") {
+				t.Errorf("expected an invalid --source-label charset error, got: %s", combined)
 			}
 		})
 	}

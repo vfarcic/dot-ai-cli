@@ -95,29 +95,60 @@ type promptMsg struct {
 // logged, printed, or written to generated skill frontmatter.
 const gitTokenHeader = "X-Dot-AI-Git-Token"
 
-// Override carries the per-invocation prompts-repo override (PRD #15 +#16).
-// Repo is the override repo URL; Path and Branch optionally qualify it. Token
-// is the CLI host's DOT_AI_GIT_TOKEN, forwarded as the gitTokenHeader on
-// override requests only. All fields are optional; an Override is "active"
-// (sends override params/header) only when Repo is set.
+// Override carries the per-invocation prompts source override (PRD #15/#16/#13).
+// It is one of two shapes, never both at once:
+//
+//   - Repo override (#15/#16): Repo is the override repo URL the *server* clones;
+//     Path and Branch optionally qualify it; Token is the CLI host's
+//     DOT_AI_GIT_TOKEN, forwarded as the gitTokenHeader on override requests
+//     only. Emitted as ?repo=&path=&branch= on the list/render calls.
+//   - Source override (#13 --repo-dir / --repo-fetch): Source is the stable
+//     identifier (e.g. local:<user>-<label>) of a source the *CLI* already
+//     uploaded to the ingestion endpoint. The server renders it from its cache —
+//     no clone. Emitted as ?source=<identifier> on the list/render calls.
+//
+// All fields are optional; an Override is "active" (sends override params/header)
+// when either Repo or Source is set.
 type Override struct {
 	Repo   string
 	Path   string
 	Branch string
 	Token  string
+	// Source is the ingested-source identifier for the --repo-dir/--repo-fetch
+	// path. When set, the list/render calls carry ?source=<identifier> instead
+	// of ?repo= (the user-approved render signal — option b), so the server
+	// serves the CLI-uploaded source and never attempts a clone. Mutually
+	// exclusive with Repo at the CLI layer.
+	Source string
 }
 
-// active reports whether this override should attach repo/path/branch params
-// and the credential header. Path, Branch, and Token only qualify a repo
-// override — without a Repo they are inert (mirrors the server contract).
-func (o Override) active() bool { return o.Repo != "" }
+// active reports whether this override should attach query params (and, for a
+// repo override, the credential header). Path, Branch, and Token only qualify a
+// repo override — without a Repo they are inert (mirrors the server contract).
+func (o Override) active() bool { return o.Repo != "" || o.Source != "" }
 
-// queryParams returns repo/path/branch as query params for the prompts list
-// and render endpoints. Empty path/branch are omitted, so a Repo-only override
-// produces exactly the #15 wire format (?repo=<url>).
+// identifier returns the human-facing source identifier for error/warning
+// messages: the credential-scrubbed repo URL for a repo override, or the
+// ingested-source identifier (a local:<...> / git-URL string) for a source
+// override. Empty when the override is inert.
+func (o Override) identifier() string {
+	if o.Repo != "" {
+		return RedactURL(o.Repo)
+	}
+	return o.Source
+}
+
+// queryParams returns the source-selection query params for the prompts list
+// and render endpoints. A source override produces exactly ?source=<identifier>
+// (never repo/path/branch). A repo override produces ?repo= plus optional
+// path/branch — exactly the #15/#16 wire format. The two are mutually exclusive,
+// so repo= and source= are never sent together.
 func (o Override) queryParams() []client.Param {
 	if !o.active() {
 		return nil
+	}
+	if o.Source != "" {
+		return []client.Param{{Name: "source", Value: o.Source, Location: "query"}}
 	}
 	params := []client.Param{{Name: "repo", Value: o.Repo, Location: "query"}}
 	if o.Path != "" {
@@ -131,8 +162,11 @@ func (o Override) queryParams() []client.Param {
 
 // bodyParams returns repo/path/branch as JSON body fields for the refresh
 // endpoint (the contract places the override in the body there, not the query).
+// Refresh is a repo-clone operation, so a source override (--repo-dir) sends no
+// body override — the contract has no server-side pull/refresh for an ingested
+// source (its content arrives via upload, not a server clone).
 func (o Override) bodyParams() []client.Param {
-	if !o.active() {
+	if o.Repo == "" {
 		return nil
 	}
 	params := []client.Param{{Name: "repo", Value: o.Repo, Location: "body", ForceString: true}}
@@ -176,7 +210,7 @@ func sourceError(err error, o Override) error {
 		msg = re.Message
 	}
 	return &client.RequestError{
-		Message:  fmt.Sprintf("Error: skills source %s rejected: %s", RedactURL(o.Repo), client.RedactCredentials(msg)),
+		Message:  fmt.Sprintf("Error: skills source %s rejected: %s", o.identifier(), client.RedactCredentials(msg)),
 		ExitCode: re.ExitCode,
 		Status:   re.Status,
 	}
@@ -291,6 +325,15 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	prompts, source, err := fetchPrompts(cfg, ov)
 	if err != nil {
 		return "", "", err
+	}
+
+	// For a source override (--repo-dir/--repo-fetch) the CLI owns the source
+	// identity: skills must be tagged with the SAME identifier used for the
+	// upload and the ?source= param, not whatever the server echoes back on the
+	// list call. Using the server echo would tag with the server's default
+	// source and break wipe-own-slice for this source.
+	if ov.Source != "" {
+		source = ov.Source
 	}
 
 	if include != "" || exclude != "" {

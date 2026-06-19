@@ -189,6 +189,72 @@ func DoWithHeaders(cfg *config.Config, method, pathTemplate string, params []Par
 	return body, nil
 }
 
+// DoJSON sends method to path with the given pre-marshaled JSON body and extra
+// request headers (empty-valued entries are skipped), using Bearer auth and the
+// same error classification as Do/DoWithHeaders. It exists for endpoints whose
+// body is a nested JSON document the flat Param-body model cannot express — e.g.
+// the prompts-source ingestion upload, whose body is {source, contentHash,
+// files:[{path,content,mode}]}. The same cross-host-redirect header-stripping
+// policy applies so any caller-supplied header is never re-sent to a redirect
+// target on a different host.
+func DoJSON(cfg *config.Config, method, path string, body []byte, headers map[string]string) ([]byte, error) {
+	fullURL := strings.TrimRight(cfg.ServerURL, "/") + path
+
+	req, err := http.NewRequestWithContext(context.Background(), method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, &RequestError{
+			Message:  fmt.Sprintf("failed to create request: %v", err),
+			ExitCode: ExitToolError,
+		}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	}
+	for k, v := range headers {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+
+	httpClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+				for k := range headers {
+					req.Header.Del(k)
+				}
+			}
+			return nil
+		},
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, &RequestError{
+			Message: fmt.Sprintf("Error: cannot connect to server at %s.\n"+
+				"Set the server URL with --server-url or DOT_AI_URL.", cfg.ServerURL),
+			ExitCode: ExitConnError,
+		}
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, &RequestError{
+			Message:  fmt.Sprintf("Error: failed to read response: %v", err),
+			ExitCode: ExitToolError,
+		}
+	}
+
+	if resp.StatusCode >= 400 {
+		return respBody, classifyHTTPError(resp.StatusCode, respBody)
+	}
+	return respBody, nil
+}
+
 // classifyHTTPError maps HTTP status codes to user-friendly errors.
 func classifyHTTPError(status int, body []byte) *RequestError {
 	msg := parseServerMessage(body)
