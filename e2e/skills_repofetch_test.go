@@ -5,6 +5,8 @@ package e2e_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -985,5 +987,117 @@ func TestSkillsGenerate_NoCache_RequiresRepoFetch(t *testing.T) {
 	combined := stdout + stderr
 	if !strings.Contains(combined, "--no-cache") || !strings.Contains(combined, "--repo-fetch") {
 		t.Errorf("expected a --no-cache/--repo-fetch requirement error, got: %s", combined)
+	}
+}
+
+// --- PRD #13 M6: integration-coverage gaps for --repo-fetch ---
+
+// SC#6 for --repo-fetch (the HARD gap): an ARGUMENT-TAKING skill loaded via
+// --repo-fetch renders through the server's ingested-source path — the --repo-dir
+// analogue (TestSkillsGenerate_RepoDir_ArgTakingSkill_RendersViaSource) only proves
+// this for a local directory. Here the CLI clones a local git repo (file://) whose
+// troubleshoot-pod/SKILL.md SHADOWS the built-in troubleshoot-pod with the shared
+// argTakingPromptFile fixture (arguments: podName + a {{podName}} template and the
+// distinctive UPLOADED-LOCAL-MARKER body), uploads the .git-free clone, and renders
+// troubleshoot-pod via ?source=<scrubbed-url>. The generated body must come from the
+// UPLOADED clone (the marker) — proving the render resolved ?source= against the
+// CLI-uploaded source, NOT a server built-in — the {{podName}} template survives (so
+// the skill is genuinely argument-taking), and the built-in default pod name is
+// absent. No DOT_AI_ALLOW_REPO_DIR: --repo-fetch is not gated by the local-dir opt-in.
+func TestSkillsGenerate_RepoFetch_ArgTakingSkill_RendersViaSource(t *testing.T) {
+	repo := repoFetchGitRepo(t, map[string]string{"troubleshoot-pod/SKILL.md": argTakingPromptFile})
+	out := t.TempDir()
+	url := fileURL(repo)
+
+	stdout, stderr, code := runCLI(t, "skills", "generate", "--path", out, "--custom-only",
+		"--include", "troubleshoot-pod", "--repo-fetch", url)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stdout: %s stderr: %s", code, stdout, stderr)
+	}
+
+	content, err := os.ReadFile(filepath.Join(out, "dot-ai-troubleshoot-pod", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("expected dot-ai-troubleshoot-pod generated from the cloned repo: %v", err)
+	}
+	s := string(content)
+	// The body came from the uploaded clone via ?source= (load-bearing proof).
+	if !strings.Contains(s, "UPLOADED-LOCAL-MARKER") {
+		t.Errorf("expected the uploaded clone body (proves ?source= render of the CLI-uploaded clone), got:\n%s", s)
+	}
+	// The argument template is preserved — this is an argument-taking skill.
+	if !strings.Contains(s, "{{podName}}") {
+		t.Errorf("expected the {{podName}} argument template in the rendered skill, got:\n%s", s)
+	}
+	// It must NOT be the server's built-in fixture render (that body names the
+	// fixture pod); that would mean ?source= was ignored and a built-in served.
+	if strings.Contains(s, "nginx-deployment-7d9c67b5f-abc12") {
+		t.Errorf("rendered the built-in default source, not the uploaded clone (?source= not honored):\n%s", s)
+	}
+	// And it carries the scrubbed-URL source identifier.
+	if got := readSkillSource(t, filepath.Join(out, "dot-ai-troubleshoot-pod", "SKILL.md")); got != url {
+		t.Errorf("expected source frontmatter %q, got %q", url, got)
+	}
+}
+
+// [PRD #13 M6 hardening] --repo-fetch wire format: the list and EACH render carry
+// ?source=<scrubbed-url> and NEVER ?repo= — making SC#1 (the server never clones for
+// --repo-fetch; the CLI clones and uploads) explicit on the wire. Mirrors the
+// --repo-dir analogue TestSkillsGenerate_RepoDir_WireFormat_SourceParamNotRepo against
+// a capturing backend (the stateless mock cannot expose request params). The upload
+// body carries the scrubbed URL as source + a sha256 contentHash + the .git-free file
+// list (.git is stripped before upload, so a one-SKILL.md repo uploads exactly one file).
+func TestSkillsGenerate_RepoFetch_WireFormat_SourceParamNotRepo(t *testing.T) {
+	cs := newRepoDirCaptureServer(t)
+	repo := repoFetchGitRepo(t, map[string]string{"p1/SKILL.md": "---\nname: p1\n---\nbody"})
+	out := t.TempDir()
+	url := fileURL(repo)
+
+	// Isolate the clone cache + upload-state store so the M4b content-hash gate never
+	// skips the upload this test asserts on (an unrelated prior run could otherwise
+	// have recorded this URL's hash in the shared cache).
+	stdout, stderr, code := runCLIAtServer(t, cs.URL,
+		[]string{"XDG_CACHE_HOME=" + t.TempDir()},
+		"skills", "generate", "--path", out, "--custom-only", "--repo-fetch", url)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stdout: %s stderr: %s", code, stdout, stderr)
+	}
+
+	reqs := cs.snapshot()
+
+	// The upload happened with the scrubbed URL + the correct nested JSON body.
+	upload := findRequest(t, reqs, http.MethodPost, "/api/v1/prompts/sources")
+	var body struct {
+		Source      string `json:"source"`
+		ContentHash string `json:"contentHash"`
+		Files       []struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+			Mode    string `json:"mode"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(upload.Body), &body); err != nil {
+		t.Fatalf("upload body is not valid JSON: %v; raw: %s", err, upload.Body)
+	}
+	if body.Source != url {
+		t.Errorf("expected upload source %q (the scrubbed URL), got %q", url, body.Source)
+	}
+	if !strings.HasPrefix(body.ContentHash, "sha256:") {
+		t.Errorf("expected a sha256: contentHash, got %q", body.ContentHash)
+	}
+	if len(body.Files) != 1 || body.Files[0].Path != "p1/SKILL.md" || body.Files[0].Content == "" {
+		t.Errorf("expected one .git-free file p1/SKILL.md with base64 content, got %+v", body.Files)
+	}
+
+	// The list + render carry ?source=<scrubbed-url> and never ?repo= — the server is
+	// never asked to clone.
+	list := findRequest(t, reqs, http.MethodGet, "/api/v1/prompts")
+	render := findRequest(t, reqs, http.MethodPost, "/api/v1/prompts/p1")
+	for _, r := range []capturedRequest{list, render} {
+		if got := r.Query["source"]; len(got) != 1 || got[0] != url {
+			t.Errorf("%s %s: expected ?source=%q, got %v", r.Method, r.Path, url, got)
+		}
+		if _, ok := r.Query["repo"]; ok {
+			t.Errorf("%s %s: --repo-fetch run must never send ?repo=, got %v", r.Method, r.Path, r.Query["repo"])
+		}
 	}
 }
