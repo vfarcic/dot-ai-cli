@@ -534,7 +534,7 @@ func NewLocalSourceUploader(cfg *config.Config, dir, identifier string, out io.W
 		if !force {
 			if stored := readUploadedHash(identifier); stored != "" && stored == hash {
 				touchUploadState(identifier)
-				fmt.Fprintf(out, "Local source %s unchanged, skipping upload\n", identifier)
+				fmt.Fprintf(out, "Source %s unchanged, skipping upload\n", identifier)
 				return nil
 			}
 		} else {
@@ -549,9 +549,9 @@ func NewLocalSourceUploader(cfg *config.Config, dir, identifier string, out io.W
 		// run, so it must not fail an otherwise-successful generate.
 		_ = writeUploadedHash(identifier, hash)
 		if status != "" {
-			fmt.Fprintf(out, "Uploaded local source as %s (%s)\n", identifier, status)
+			fmt.Fprintf(out, "Uploaded source as %s (%s)\n", identifier, status)
 		} else {
-			fmt.Fprintf(out, "Uploaded local source as %s\n", identifier)
+			fmt.Fprintf(out, "Uploaded source as %s\n", identifier)
 		}
 		return nil
 	}

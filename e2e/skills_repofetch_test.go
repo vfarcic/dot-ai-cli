@@ -69,6 +69,11 @@ func TestSkillsGenerate_SourceFlags_MutualExclusion(t *testing.T) {
 					t.Errorf("expected mutual-exclusion error to contain %q, got: %s", want, combined)
 				}
 			}
+			// Plain (non-RequestError) failures must also render with exactly one
+			// "Error:" prefix now that cobra's own error printing is silenced.
+			if strings.Contains(combined, "Error: Error:") {
+				t.Errorf("expected a single \"Error:\" prefix on the usage error, got: %s", combined)
+			}
 		})
 	}
 }
@@ -351,7 +356,7 @@ func TestSkillsGenerate_RepoFetch_EndToEnd_NewSkill(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d; stdout: %s stderr: %s", code, stdout, stderr)
 	}
 	// Upload confirmation carries the scrubbed-URL identifier.
-	if !strings.Contains(stdout, "Uploaded local source as "+url) {
+	if !strings.Contains(stdout, "Uploaded source as "+url) {
 		t.Errorf("expected upload confirmation for %q, got: %s", url, stdout)
 	}
 	// The cloned brand-new prompt becomes a skill named after itself — proof the

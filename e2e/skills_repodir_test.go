@@ -80,6 +80,15 @@ func TestSkillsGenerate_RepoDir_RequiresOptIn(t *testing.T) {
 	if !strings.Contains(combined, "DOT_AI_ALLOW_REPO_DIR") {
 		t.Errorf("expected opt-in error naming DOT_AI_ALLOW_REPO_DIR, got: %s", combined)
 	}
+	// The opt-in refusal message is a RequestError whose Message already embeds
+	// "Error:"; with cobra's own error printing silenced it must render with
+	// exactly one prefix, not the historical "Error: Error: ...".
+	if strings.Contains(combined, "Error: Error:") {
+		t.Errorf("expected a single \"Error:\" prefix on the opt-in refusal, got: %s", combined)
+	}
+	if !strings.Contains(stderr, "Error: --repo-dir is opt-in:") {
+		t.Errorf("expected the single-prefixed opt-in error on stderr, got: %s", stderr)
+	}
 	// Nothing should have been generated.
 	if _, err := os.Stat(filepath.Join(out, "dot-ai-troubleshoot-pod")); !os.IsNotExist(err) {
 		t.Errorf("expected no skills generated when --repo-dir is refused")
@@ -100,7 +109,7 @@ func TestSkillsGenerate_RepoDir_EndToEnd_SourceFrontmatter(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d; stdout: %s stderr: %s", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Uploaded local source as local:tester-foo") {
+	if !strings.Contains(stdout, "Uploaded source as local:tester-foo") {
 		t.Errorf("expected upload confirmation for local:tester-foo, got: %s", stdout)
 	}
 	// Every generated prompt skill is tagged with the CLI-computed identifier,

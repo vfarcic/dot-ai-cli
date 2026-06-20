@@ -51,7 +51,7 @@ func TestSkillsGenerate_RepoDir_ContentHashGating(t *testing.T) {
 	if code1 != 0 {
 		t.Fatalf("run 1 expected exit 0, got %d; stdout: %s stderr: %s", code1, stdout1, stderr1)
 	}
-	if !strings.Contains(stdout1, "Uploaded local source as local:tester-foo") {
+	if !strings.Contains(stdout1, "Uploaded source as local:tester-foo") {
 		t.Errorf("run 1 expected an upload confirmation, got: %s", stdout1)
 	}
 	if n := countCaptured(cs.snapshot(), http.MethodPost, "/api/v1/prompts/sources"); n != 1 {
@@ -82,7 +82,7 @@ func TestSkillsGenerate_RepoDir_ContentHashGating(t *testing.T) {
 	if code3 != 0 {
 		t.Fatalf("run 3 expected exit 0, got %d; stdout: %s stderr: %s", code3, stdout3, stderr3)
 	}
-	if !strings.Contains(stdout3, "Uploaded local source as local:tester-foo") {
+	if !strings.Contains(stdout3, "Uploaded source as local:tester-foo") {
 		t.Errorf("run 3 expected a re-upload after the content changed, got: %s", stdout3)
 	}
 	if n := countCaptured(cs.snapshot(), http.MethodPost, "/api/v1/prompts/sources"); n != 2 {
@@ -107,7 +107,7 @@ func TestSkillsGenerate_RepoFetch_ContentHashGating(t *testing.T) {
 	if code1 != 0 {
 		t.Fatalf("run 1 expected exit 0, got %d; stdout: %s stderr: %s", code1, stdout1, stderr1)
 	}
-	if !strings.Contains(stdout1, "Uploaded local source as "+url) {
+	if !strings.Contains(stdout1, "Uploaded source as "+url) {
 		t.Errorf("run 1 expected an upload confirmation, got: %s", stdout1)
 	}
 	if n := countCaptured(cs.snapshot(), http.MethodPost, "/api/v1/prompts/sources"); n != 1 {
@@ -145,7 +145,7 @@ WIP-SECOND-FETCHED-MARKER body.`
 	if code3 != 0 {
 		t.Fatalf("run 3 expected exit 0, got %d; stdout: %s stderr: %s", code3, stdout3, stderr3)
 	}
-	if !strings.Contains(stdout3, "Uploaded local source as "+url) {
+	if !strings.Contains(stdout3, "Uploaded source as "+url) {
 		t.Errorf("run 3 expected a re-upload after the fetched content changed, got: %s", stdout3)
 	}
 	if n := countCaptured(cs.snapshot(), http.MethodPost, "/api/v1/prompts/sources"); n != 2 {
