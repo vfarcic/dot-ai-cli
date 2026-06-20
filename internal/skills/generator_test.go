@@ -352,3 +352,83 @@ func TestWritePromptSkill_PathTraversalRejected(t *testing.T) {
 		})
 	}
 }
+
+// PRD #13 M3 review fix [N2]: RedactURL must scrub credentials robustly, not just
+// on a clean net/url parse. The parser-only version returned its input unchanged
+// on a parse error or whenever u.User was nil, so a user:token@ could survive to
+// a sink (frontmatter / stdout / ?source= / upload field). The hardened version
+// folds in the client.RedactCredentials regex as a second line of defense.
+func TestRedactURL_RobustCredentialScrub(t *testing.T) {
+	const token = "s3cr3t-tok-redacturl"
+	cases := []struct {
+		name        string
+		in          string
+		wantNoToken bool   // token must not survive
+		wantExact   string // exact expected output ("" = don't assert exact)
+	}{
+		{"plain https unchanged", "https://github.com/orgA/skills", false, "https://github.com/orgA/skills"},
+		{"non-url passthrough", "built-in", false, "built-in"},
+		{"clean credentialed https", "https://user:" + token + "@github.com/orgA/skills", true, "https://github.com/orgA/skills"},
+		{"username-only token", "https://" + token + "@github.com/orgA/skills", true, "https://github.com/orgA/skills"},
+		// A bracketed-host URL net/url rejects with a parse error: the old
+		// parser-only path returned it verbatim, leaking the token. The regex
+		// fallback must still scrub it.
+		{"parse-error still scrubbed", "https://user:" + token + "@[::bad/repo", true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RedactURL(tc.in)
+			if tc.wantNoToken && strings.Contains(got, token) {
+				t.Fatalf("credential token leaked through RedactURL(%q) = %q", tc.in, got)
+			}
+			if tc.wantExact != "" && got != tc.wantExact {
+				t.Errorf("RedactURL(%q) = %q, want %q", tc.in, got, tc.wantExact)
+			}
+		})
+	}
+}
+
+// PRD #13 M3 review fix [C]: the clone-failure message must scrub credentials
+// from BOTH the URL and any git stderr. Modern git redacts userinfo from its own
+// diagnostics, so an e2e clone can never put a token into stderr — making this
+// the deterministic, version-independent test that actually exercises the
+// client.RedactCredentials(stderr) path. If that scrub were removed, the token
+// embedded in the simulated (older-git-style) stderr below would leak and this
+// test would fail.
+func TestCloneFailureMessage_ScrubsCredentialedStderr(t *testing.T) {
+	const token = "s3cr3t-tok-stderr"
+	rawURL := "https://user:" + token + "@git.example.com/team/skills.git"
+	// Simulate an older git (or a credential helper) that echoes the credentialed
+	// remote verbatim in its error — exactly what RedactCredentials must catch.
+	stderr := "fatal: unable to access '" + rawURL + "': Could not resolve host: git.example.com\n"
+
+	msg := cloneFailureMessage(rawURL, stderr, false)
+	if strings.Contains(msg, token) {
+		t.Fatalf("credential leaked into clone-failure message: %s", msg)
+	}
+	if strings.Contains(msg, "user:") {
+		t.Errorf("raw userinfo leaked into clone-failure message: %s", msg)
+	}
+	// The stderr detail is still surfaced (for diagnosis), just with the userinfo
+	// regex-scrubbed to ://***:***@ — proof RedactCredentials(stderr) ran.
+	if !strings.Contains(msg, "://***:***@") {
+		t.Errorf("expected the stderr userinfo to be regex-scrubbed, got: %s", msg)
+	}
+	if !strings.Contains(msg, "Could not resolve host") {
+		t.Errorf("expected git's diagnosis to be surfaced, got: %s", msg)
+	}
+}
+
+// PRD #13 M3 review fix [N3]: a timed-out clone reports the timeout plainly
+// (git's stderr is an opaque "signal: killed") and still scrubs the URL.
+func TestCloneFailureMessage_TimeoutScrubsURL(t *testing.T) {
+	const token = "s3cr3t-tok-timeout"
+	rawURL := "https://user:" + token + "@git.example.com/team/skills.git"
+	msg := cloneFailureMessage(rawURL, "signal: killed", true)
+	if strings.Contains(msg, token) {
+		t.Fatalf("credential leaked into timeout message: %s", msg)
+	}
+	if !strings.Contains(msg, "timed out") {
+		t.Errorf("expected a timeout message, got: %s", msg)
+	}
+}

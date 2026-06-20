@@ -114,10 +114,14 @@ one agent hook per source.`,
 			return fmt.Errorf("--source-label %q is invalid: use only letters, digits, '.', '_', or '-' (no spaces, slashes, or control characters)", skillsSourceLabel)
 		}
 		// --pull-latest forces the server to pull its configured git repo, which is
-		// meaningless for an uploaded local source. (Leave --pull-latest with --repo
-		// or no source flag unchanged.)
+		// meaningless for a CLI-uploaded source (both --repo-dir and --repo-fetch
+		// upload their own content via ?source=, so there is no server-side repo to
+		// refresh). Leave --pull-latest with --repo or no source flag unchanged.
 		if skillsPullLatest && skillsRepoDir != "" {
 			return fmt.Errorf("--pull-latest cannot be used with --repo-dir: it forces a server-side git pull, which does not apply to an uploaded local source")
+		}
+		if skillsPullLatest && skillsRepoFetch != "" {
+			return fmt.Errorf("--pull-latest cannot be used with --repo-fetch: it forces a server-side git pull, which does not apply to a CLI-uploaded source")
 		}
 		// --repo-path / --repo-branch only qualify a repo-bearing source
 		// (--repo or --repo-fetch). They are meaningless without one, and a
@@ -129,11 +133,6 @@ one agent hook per source.`,
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// M3 (--repo-fetch CLI-side clone) is still a stub. Fail honestly rather
-		// than silently ignoring the flag.
-		if skillsRepoFetch != "" {
-			return fmt.Errorf("--repo-fetch is not yet implemented (PRD #13 M3)")
-		}
 		ov := buildOverride()
 		// --repo-dir (M2): read the local directory and upload it to the
 		// ingestion endpoint, then drive list+render through ?source=<identifier>.
@@ -149,6 +148,32 @@ one agent hook per source.`,
 				return err
 			}
 			status, err := skills.UploadLocalSource(GetConfig(), resolved, identifier)
+			if err != nil {
+				return err
+			}
+			if status != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Uploaded local source as %s (%s)\n", identifier, status)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Uploaded local source as %s\n", identifier)
+			}
+			ov.Source = identifier
+		}
+		// --repo-fetch (M3): clone the repo with the HOST git stack into a temp
+		// dir, then feed that clone into the same upload/list/render chain as
+		// --repo-dir. The identifier is the credential-scrubbed URL (RedactURL),
+		// used identically for the upload source field, the source: frontmatter
+		// tag, and the ?source= param — credentials never reach the server,
+		// frontmatter, logs, or stdout/stderr. --repo-branch/--repo-path qualify
+		// the CLONE here (the server only ever renders the uploaded result), so
+		// ov.Branch/ov.Path are consumed by the clone, not sent as query params.
+		if skillsRepoFetch != "" {
+			identifier := skills.RedactURL(skillsRepoFetch)
+			sourceDir, cleanup, err := skills.CloneRepoFetch(skillsRepoFetch, ov.Branch, ov.Path)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			status, err := skills.UploadLocalSource(GetConfig(), sourceDir, identifier)
 			if err != nil {
 				return err
 			}
@@ -257,7 +282,7 @@ func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsRepo, "repo", "", "Override the server's configured prompts repo for this invocation (passed through as ?repo=<url>). Default: server's env-var repo. When --repo points at a private cross-realm source, set DOT_AI_GIT_TOKEN in the environment to authenticate the clone; it is forwarded as the X-Dot-AI-Git-Token header on override requests only and is never logged or written to skills.")
 	skillsGenerateCmd.Flags().StringVar(&skillsRepoPath, "repo-path", "", "Subdirectory within --repo to read skills from (passed through as ?path=<subdir>). Requires --repo or --repo-fetch. Default: repo root")
 	skillsGenerateCmd.Flags().StringVar(&skillsRepoBranch, "repo-branch", "", "Branch of --repo to read skills from (passed through as ?branch=<branch>). Requires --repo or --repo-fetch. Default: main")
-	skillsGenerateCmd.Flags().StringVar(&skillsRepoFetch, "repo-fetch", "", "Clone this git repo from the CLI host (using the host's local git stack) and upload it as the skill source for this invocation — for sources the server cannot reach (e.g. SSO/device-attested VPNs). Accepts optional --repo-path/--repo-branch. Mutually exclusive with --repo and --repo-dir. (clone/upload lands in PRD #13 M3)")
+	skillsGenerateCmd.Flags().StringVar(&skillsRepoFetch, "repo-fetch", "", "Clone this git repo from the CLI host (using the host's local git stack: SSH agent, git credential helper, ~/.gitconfig) and upload it as the skill source for this invocation — for sources the server cannot reach (e.g. SSO/device-attested VPNs). Accepts optional --repo-path/--repo-branch. The source: frontmatter records the URL with any credentials scrubbed. Mutually exclusive with --repo and --repo-dir.")
 	skillsGenerateCmd.Flags().StringVar(&skillsRepoDir, "repo-dir", "", "Read skills from a local directory and upload them as the skill source for this invocation (no network, no clone), then render via ?source=. Requires --source-label. Opt-in: set DOT_AI_ALLOW_REPO_DIR=1 (paths under /tmp or world-writable dirs are refused; an optional base-path allowlist is set via DOT_AI_REPO_DIR_ALLOW). Mutually exclusive with --repo and --repo-fetch.")
 	skillsGenerateCmd.Flags().StringVar(&skillsSourceLabel, "source-label", "", "Stable identifier for the --repo-dir source. Auto-prefixed with the host identity for per-server uniqueness: 'source: local:<user>-<label>' (falls back to local:<host>-<label>). Required with --repo-dir.")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

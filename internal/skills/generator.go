@@ -726,15 +726,25 @@ func writeRoutingSkill(dir string, content []byte) error {
 }
 
 // RedactURL strips userinfo (user:password@) from a URL string so that any
-// embedded credentials are not echoed to stdout, logs, or CI output. Returns
-// the input unchanged for non-URL values (e.g. "built-in") or parse failures.
+// embedded credentials are not echoed to stdout, logs, or CI output, and it is
+// the ONLY scrub on the --repo-fetch success-path identifier (upload source
+// field, source: frontmatter tag, ?source= param). A parser-only redaction is
+// brittle: net/url returns the input unchanged on a parse error, and may not
+// surface every credential as u.User (a non-RFC-3986 URL, or odd encodings), so
+// a user:token@ could otherwise survive to a sink. To make it belt-and-
+// suspenders, the result is ALSO run through client.RedactCredentials (a regex
+// scrub of any embedded "...@" in free text): on a clean parse it strips any
+// residual credential u.User missed, and on a parse failure / userinfo-less
+// parse it becomes the sole, robust line of defense. For values with no embedded
+// credential (e.g. "built-in" or a plain https URL) RedactCredentials is a
+// no-op, so this stays a faithful pass-through there.
 func RedactURL(s string) string {
 	u, err := url.Parse(s)
 	if err != nil || u.User == nil {
-		return s
+		return client.RedactCredentials(s)
 	}
 	u.User = nil
-	return u.String()
+	return client.RedactCredentials(u.String())
 }
 
 // yamlEscape wraps a string in quotes if it contains YAML-special characters.
