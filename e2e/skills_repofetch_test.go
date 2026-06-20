@@ -168,20 +168,9 @@ func TestSkillsGenerate_RepoDir_RejectsPathBranch(t *testing.T) {
 	}
 }
 
-// Guard: --install-hook with --repo-dir is refused until M5. BuildHookCommand
-// does not yet emit the source flag, so an installed hook would regenerate
-// without the source — silently broken. The error must name PRD #13 M5.
-func TestSkillsGenerate_RepoDir_InstallHookRejected(t *testing.T) {
-	stdout, stderr, exitCode := runCLI(t, "skills", "generate", "--agent", "claude-code",
-		"--install-hook", "--repo-dir", "/some/skills/dir", "--source-label", "foo")
-	if exitCode == 0 {
-		t.Fatalf("expected non-zero exit for --install-hook with --repo-dir; stdout: %s stderr: %s", stdout, stderr)
-	}
-	combined := stdout + stderr
-	if !strings.Contains(combined, "--install-hook") || !strings.Contains(combined, "M5") {
-		t.Errorf("expected an --install-hook M5 not-supported error, got: %s", combined)
-	}
-}
+// PRD #13 M5: --install-hook with --repo-dir/--repo-fetch is no longer rejected —
+// BuildHookCommand now round-trips the source flags. The round-trip is covered by
+// the hook tests in skills_hook_roundtrip_test.go.
 
 // Guard: --pull-latest with --repo-dir is refused — --pull-latest forces a
 // server-side git pull, which is meaningless for an uploaded local source.

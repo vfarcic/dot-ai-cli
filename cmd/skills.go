@@ -133,13 +133,11 @@ one agent hook per source.`,
 			if skillsPath != "" {
 				return fmt.Errorf("--install-hook cannot be used with --path")
 			}
-			// BuildHookCommand does not yet emit the --repo-dir/--repo-fetch source
-			// flags (PRD #13 M5 adds the round-trip), so an installed hook would
-			// regenerate WITHOUT the source — a silently broken, source-less hook.
-			// Refuse the combination until M5 makes it faithful.
-			if skillsRepoDir != "" || skillsRepoFetch != "" {
-				return fmt.Errorf("--install-hook is not yet supported with --repo-dir/--repo-fetch (PRD #13 M5): the installed hook would regenerate without the source flag")
-			}
+			// PRD #13 M5: --install-hook now round-trips the --repo-dir/--repo-fetch
+			// source flags (BuildHookCommand emits them), so the earlier M2/M3 guard
+			// that rejected the combination is gone. A --repo-dir hook deliberately
+			// does NOT embed DOT_AI_ALLOW_REPO_DIR — it is read from the env at
+			// hook-run time (see the flag help).
 		}
 		// At most one source flag may be supplied per invocation; --repo,
 		// --repo-fetch, and --repo-dir each describe a complete, distinct
@@ -275,7 +273,12 @@ one agent hook per source.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "Source: %s\n", skills.RedactURL(source))
 		}
 		if skillsInstallHook {
-			hookCmd := skills.BuildHookCommand(include, exclude, customOnly, ov)
+			hookCmd := skills.BuildHookCommand(include, exclude, customOnly, ov, skills.HookSource{
+				RepoFetch:   skillsRepoFetch,
+				RepoDir:     skillsRepoDir,
+				SourceLabel: skillsSourceLabel,
+				NoCache:     skillsNoCache,
+			})
 			if err := skills.InstallSessionHook(hookCmd); err != nil {
 				return err
 			}
@@ -338,7 +341,7 @@ func resolveSkillFilters(cmd *cobra.Command) (include, exclude string, customOnl
 func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsAgent, "agent", "", "Target agent: "+strings.Join(agentNames(), ", "))
 	skillsGenerateCmd.Flags().StringVar(&skillsPath, "path", "", "Override output directory (for unsupported agents)")
-	skillsGenerateCmd.Flags().BoolVar(&skillsInstallHook, "install-hook", false, "Install a Claude Code SessionStart hook to regenerate skills on startup (requires --agent claude-code)")
+	skillsGenerateCmd.Flags().BoolVar(&skillsInstallHook, "install-hook", false, "Install a Claude Code SessionStart hook that regenerates skills on startup (requires --agent claude-code). Round-trips the source flags (--repo, --repo-fetch, --repo-path/--repo-branch, --no-cache, --repo-dir/--source-label), with any URL credential scrubbed. Secrets and opt-ins are never written to settings.json and must be set in the environment at hook-run time: a --repo hook reads DOT_AI_GIT_TOKEN; a --repo-dir hook reads DOT_AI_ALLOW_REPO_DIR.")
 	skillsGenerateCmd.Flags().BoolVar(&skillsPullLatest, "pull-latest", false, "Force the server to pull the latest skills from the git repository before generating")
 	skillsGenerateCmd.Flags().StringVar(&skillsInclude, "include", "", "Regex to filter skills to include (env: DOT_AI_SKILLS_INCLUDE)")
 	skillsGenerateCmd.Flags().StringVar(&skillsExclude, "exclude", "", "Regex to filter skills to exclude (env: DOT_AI_SKILLS_EXCLUDE)")
