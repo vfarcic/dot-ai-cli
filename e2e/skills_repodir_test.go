@@ -158,18 +158,15 @@ description: A brand-new skill authored only in the local source
 ---
 WIP-NEW-SKILL-MARKER body for an entirely new skill.`
 
-// 3b. PENDING (list-by-source gap): a --repo-dir source whose prompt name does
-// NOT collide with a server built-in. This is the genuine new-WIP-skill case:
-// the skill exists ONLY in the uploaded source, so it can appear ONLY if the
-// server honors GET /api/v1/prompts?source= for LISTING (returns the uploaded
-// source's prompts, not the built-ins). The currently pinned mock ignores
-// ?source= on the list call, so the new prompt is never listed and no skill is
-// generated — hence this is skipped, not faked. It becomes a live test the
-// moment the republished mock honors ?source=. (The render path is already
-// covered today by TestSkillsGenerate_RepoDir_ArgTakingSkill_RendersViaSource.)
-func TestSkillsGenerate_RepoDir_NonBuiltinPrompt_PendingListBySource(t *testing.T) {
-	t.Skip("pending server list-by-source endpoint — requested from PRD #647; un-skip when the mock is republished to honor GET /api/v1/prompts?source=")
-
+// 3b. PRIMARY USE CASE (list-by-source): a --repo-dir source whose prompt name
+// does NOT collide with any server built-in. This is the genuine new-WIP-skill
+// case the feature targets: the skill exists ONLY in the uploaded source, so it
+// can appear ONLY if the server honors GET /api/v1/prompts?source= for LISTING
+// (returns the uploaded source's prompts, not the built-ins). The republished
+// mock (PRD #647) now does exactly that, so this proves the full
+// upload -> list-by-source -> render -> generate chain produces a brand-new
+// skill file tagged with the local: identifier — no git, no clone.
+func TestSkillsGenerate_RepoDir_NonBuiltinPrompt_ListBySource(t *testing.T) {
 	src := repoDirSource(t, map[string]string{"wip-new-skill/SKILL.md": newWipSkillFile})
 	out := t.TempDir()
 	stdout, stderr, code := runCLIWithEnv(t, []string{"DOT_AI_ALLOW_REPO_DIR=1", "USER=tester"},
@@ -320,6 +317,89 @@ func TestSkillsGenerate_RepoDir_WireFormat_SourceParamNotRepo(t *testing.T) {
 			t.Errorf("%s %s: --repo-dir run must never send ?repo=, got %v", r.Method, r.Path, r.Query["repo"])
 		}
 	}
+}
+
+// 9. Evicted/unknown source on the LIST call: the upload succeeds, but by the
+// time the CLI enumerates the source the server no longer has it (cache eviction,
+// restart, or a never-ingested identifier) and answers GET /api/v1/prompts?source=
+// with a 400 VALIDATION_ERROR carrying re-upload guidance. The CLI must turn that
+// into a CLEAN, actionable error: a non-zero exit naming the source and echoing
+// the server's "(re)upload via POST /api/v1/prompts/sources" guidance — never a
+// crash, a stack trace, a nil-deref, the raw error CODE, or git/clone vocabulary.
+//
+// The republished mock always re-serves a source it just ingested, so this
+// evicted-between-upload-and-list race can only be reproduced against a backend
+// we control — exactly the captureServer split the override tests already use.
+//
+// Auto-re-upload-on-evict retry is intentionally NOT implemented here: it is
+// deferred to PRD #13 M4 (the skip-if-unchanged / re-ingest milestone). The M2
+// requirement is only that the evicted path fails cleanly, which this asserts.
+func TestSkillsGenerate_RepoDir_ListSourceEvicted_CleanError(t *testing.T) {
+	cs := newRepoDirEvictedListServer(t)
+	src := repoDirSource(t, map[string]string{"wip-new-skill/SKILL.md": newWipSkillFile})
+	out := t.TempDir()
+
+	stdout, stderr, code := runCLIAtServer(t, cs.URL,
+		[]string{"DOT_AI_ALLOW_REPO_DIR=1", "USER=tester"},
+		"skills", "generate", "--path", out, "--custom-only", "--repo-dir", src, "--source-label", "foo")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit when the list ?source= is evicted (400); stdout: %s stderr: %s", stdout, stderr)
+	}
+	combined := stdout + stderr
+
+	// Actionable: names the source and surfaces the server's re-upload guidance.
+	if !strings.Contains(combined, "local:tester-foo") {
+		t.Errorf("expected the error to name the source local:tester-foo, got: %s", combined)
+	}
+	if !strings.Contains(strings.ToLower(combined), "upload") ||
+		!strings.Contains(combined, "POST /api/v1/prompts/sources") {
+		t.Errorf("expected re-upload guidance pointing at POST /api/v1/prompts/sources, got: %s", combined)
+	}
+
+	// Clean: no crash/stack-trace, no raw error code, no git/clone vocabulary
+	// (this path never attempts a clone), and nothing should have been generated.
+	for _, leak := range []string{"panic", "goroutine", "runtime error", "nil pointer", "VALIDATION_ERROR", "clone", "git "} {
+		if strings.Contains(combined, leak) {
+			t.Errorf("error leaked internal/irrelevant detail %q: %s", leak, combined)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(out, "dot-ai-wip-new-skill")); !os.IsNotExist(err) {
+		t.Errorf("expected no skill generated when the source list is evicted")
+	}
+}
+
+// newRepoDirEvictedListServer accepts the upload (200 ingested) but answers the
+// subsequent GET /api/v1/prompts?source= with the server's 400 VALIDATION_ERROR
+// re-upload guidance, modelling a source evicted between upload and list.
+func newRepoDirEvictedListServer(t *testing.T) *captureServer {
+	t.Helper()
+	cs := &captureServer{}
+	cs.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		cs.mu.Lock()
+		cs.requests = append(cs.requests, capturedRequest{
+			Method: r.Method,
+			Path:   r.URL.Path,
+			Query:  r.URL.Query(),
+			Body:   string(bodyBytes),
+		})
+		cs.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/prompts/sources":
+			io.WriteString(w, `{"success":true,"data":{"source":`+jsonString(r.URL.Query().Get("source"))+`,"contentHash":"sha256:x","fileCount":1,"status":"ingested"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/prompts":
+			src := r.URL.Query().Get("source")
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, `{"success":false,"error":{"code":"VALIDATION_ERROR","message":"Ingested source not found: `+src+`. (Re)upload it via POST /api/v1/prompts/sources before rendering."}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, `{"success":false,"error":{"code":"NOT_FOUND","message":"no route"}}`)
+		}
+	}))
+	t.Cleanup(cs.Close)
+	return cs
 }
 
 // newRepoDirCaptureServer records every request and returns enough fixture JSON
