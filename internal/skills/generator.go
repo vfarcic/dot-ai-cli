@@ -95,29 +95,60 @@ type promptMsg struct {
 // logged, printed, or written to generated skill frontmatter.
 const gitTokenHeader = "X-Dot-AI-Git-Token"
 
-// Override carries the per-invocation prompts-repo override (PRD #15 +#16).
-// Repo is the override repo URL; Path and Branch optionally qualify it. Token
-// is the CLI host's DOT_AI_GIT_TOKEN, forwarded as the gitTokenHeader on
-// override requests only. All fields are optional; an Override is "active"
-// (sends override params/header) only when Repo is set.
+// Override carries the per-invocation prompts source override (PRD #15/#16/#13).
+// It is one of two shapes, never both at once:
+//
+//   - Repo override (#15/#16): Repo is the override repo URL the *server* clones;
+//     Path and Branch optionally qualify it; Token is the CLI host's
+//     DOT_AI_GIT_TOKEN, forwarded as the gitTokenHeader on override requests
+//     only. Emitted as ?repo=&path=&branch= on the list/render calls.
+//   - Source override (#13 --repo-dir / --repo-fetch): Source is the stable
+//     identifier (e.g. local:<user>-<label>) of a source the *CLI* already
+//     uploaded to the ingestion endpoint. The server renders it from its cache —
+//     no clone. Emitted as ?source=<identifier> on the list/render calls.
+//
+// All fields are optional; an Override is "active" (sends override params/header)
+// when either Repo or Source is set.
 type Override struct {
 	Repo   string
 	Path   string
 	Branch string
 	Token  string
+	// Source is the ingested-source identifier for the --repo-dir/--repo-fetch
+	// path. When set, the list/render calls carry ?source=<identifier> instead
+	// of ?repo= (the user-approved render signal — option b), so the server
+	// serves the CLI-uploaded source and never attempts a clone. Mutually
+	// exclusive with Repo at the CLI layer.
+	Source string
 }
 
-// active reports whether this override should attach repo/path/branch params
-// and the credential header. Path, Branch, and Token only qualify a repo
-// override — without a Repo they are inert (mirrors the server contract).
-func (o Override) active() bool { return o.Repo != "" }
+// active reports whether this override should attach query params (and, for a
+// repo override, the credential header). Path, Branch, and Token only qualify a
+// repo override — without a Repo they are inert (mirrors the server contract).
+func (o Override) active() bool { return o.Repo != "" || o.Source != "" }
 
-// queryParams returns repo/path/branch as query params for the prompts list
-// and render endpoints. Empty path/branch are omitted, so a Repo-only override
-// produces exactly the #15 wire format (?repo=<url>).
+// identifier returns the human-facing source identifier for error/warning
+// messages: the credential-scrubbed repo URL for a repo override, or the
+// ingested-source identifier (a local:<...> / git-URL string) for a source
+// override. Empty when the override is inert.
+func (o Override) identifier() string {
+	if o.Repo != "" {
+		return RedactURL(o.Repo)
+	}
+	return o.Source
+}
+
+// queryParams returns the source-selection query params for the prompts list
+// and render endpoints. A source override produces exactly ?source=<identifier>
+// (never repo/path/branch). A repo override produces ?repo= plus optional
+// path/branch — exactly the #15/#16 wire format. The two are mutually exclusive,
+// so repo= and source= are never sent together.
 func (o Override) queryParams() []client.Param {
 	if !o.active() {
 		return nil
+	}
+	if o.Source != "" {
+		return []client.Param{{Name: "source", Value: o.Source, Location: "query"}}
 	}
 	params := []client.Param{{Name: "repo", Value: o.Repo, Location: "query"}}
 	if o.Path != "" {
@@ -131,8 +162,11 @@ func (o Override) queryParams() []client.Param {
 
 // bodyParams returns repo/path/branch as JSON body fields for the refresh
 // endpoint (the contract places the override in the body there, not the query).
+// Refresh is a repo-clone operation, so a source override (--repo-dir) sends no
+// body override — the contract has no server-side pull/refresh for an ingested
+// source (its content arrives via upload, not a server clone).
 func (o Override) bodyParams() []client.Param {
-	if !o.active() {
+	if o.Repo == "" {
 		return nil
 	}
 	params := []client.Param{{Name: "repo", Value: o.Repo, Location: "body", ForceString: true}}
@@ -145,12 +179,16 @@ func (o Override) bodyParams() []client.Param {
 	return params
 }
 
-// headers returns the credential header, forwarded only when the override is
-// active and a token is set. A no-override run (or a run with no token) sends
-// no header — the header is inert server-side without a repo, so the CLI never
-// sends it on non-override requests.
+// headers returns the credential header, forwarded only when a REPO override is
+// in play (o.Repo != "") and a token is set. The git token is meaningful only
+// for a server-side clone of o.Repo; gating on Repo specifically — not active()
+// — means a source-only override (--repo-dir/--repo-fetch, where active() is
+// true via Source) never forwards it, even if a Token somehow rode along.
+// active() still governs ?source= emission (queryParams), so source overrides
+// keep working; only the credential is withheld. A no-override run, a
+// source-only run, or a run with no token sends no header.
 func (o Override) headers() map[string]string {
-	if !o.active() || o.Token == "" {
+	if o.Repo == "" || o.Token == "" {
 		return nil
 	}
 	return map[string]string{gitTokenHeader: o.Token}
@@ -176,10 +214,45 @@ func sourceError(err error, o Override) error {
 		msg = re.Message
 	}
 	return &client.RequestError{
-		Message:  fmt.Sprintf("Error: skills source %s rejected: %s", RedactURL(o.Repo), client.RedactCredentials(msg)),
+		Message:  fmt.Sprintf("Error: skills source %s rejected: %s", o.identifier(), client.RedactCredentials(msg)),
 		ExitCode: re.ExitCode,
 		Status:   re.Status,
 	}
+}
+
+// isEvictedSourceError reports whether err is the specific 400 the server
+// returns when a ?source= override names an ingested source it no longer holds
+// (the in-memory LRU evicted it or a restart cleared it). It is the trigger for
+// the single force-re-upload + retry in Generate, so it is deliberately narrow:
+//
+//   - only for an active SOURCE override (ov.Source != "") — a --repo override
+//     never uploads, so its 400s must keep flowing to the clean error path;
+//   - status 400 exactly (the server's VALIDATION_ERROR for an unknown source);
+//   - the message both mentions "upload" AND points at the ingestion endpoint
+//     (POST /api/v1/prompts/sources) — the server's re-upload guidance, not any
+//     other 400 (an over-limit upload, a bad path, etc.).
+//
+// Matching the guidance text (not just the status) keeps an unrelated 400 from
+// triggering a pointless re-upload loop. It is used on two call paths: the
+// reframed error from fetchPrompts (sourceError preserves Status and folds the
+// server message into Message) AND the raw per-prompt renderPrompt error (which
+// keeps the guidance in both Message — "Error: request failed (400): <guidance>"
+// — and ServerMessage). Either way Message carries the guidance text, so
+// matching on Message alone covers both.
+func isEvictedSourceError(err error, ov Override) bool {
+	if ov.Source == "" {
+		return false
+	}
+	re, ok := err.(*client.RequestError)
+	if !ok || re.Status != 400 {
+		return false
+	}
+	// On both call paths Message carries the guidance text: the list path folds
+	// the server message into Message via sourceError, and the raw render path's
+	// Message embeds it as "Error: request failed (400): <guidance>".
+	msg := re.Message
+	return strings.Contains(strings.ToLower(msg), "upload") &&
+		strings.Contains(msg, "/api/v1/prompts/sources")
 }
 
 // RefreshPrompts asks the server to pull the latest prompts from the
@@ -258,7 +331,7 @@ func filterByName(names []string, include, exclude string) ([]string, error) {
 // untouched. Cross-source name collisions are resolved first-source-wins with
 // a warning to stderr. An exclusive file lock on <outDir>/.dot-ai.lock
 // serializes concurrent invocations.
-func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte, ov Override) (string, string, error) {
+func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte, ov Override, ensureUploaded func(force bool) error) (string, string, error) {
 	outDir, err := resolveDir(agent, path)
 	if err != nil {
 		return "", "", err
@@ -280,6 +353,35 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	}
 	defer lock.Release()
 
+	// For a CLI-uploaded source (--repo-dir/--repo-fetch) ensureUploaded gates
+	// the upload on the source's content hash: the first ever run uploads, an
+	// unchanged source skips, a changed source re-uploads. It MUST run before the
+	// list/render calls below, which resolve the source from the server's cache
+	// via ?source=. Nil for --repo / the no-flag path (no upload to gate).
+	if ensureUploaded != nil {
+		if err := ensureUploaded(false); err != nil {
+			return "", "", err
+		}
+	}
+
+	// forceReuploadOnce performs the evicted-source recovery re-upload at most
+	// ONCE per run. The server's ingested-source cache is in-memory/LRU and can
+	// drop the source between the gated upload and a later list/render call; both
+	// the list evict-retry and every per-prompt render evict-retry funnel through
+	// here, so even when many renders hit eviction the forced re-upload runs a
+	// single time (no per-prompt re-upload storm). reuploaded is flipped before
+	// the call so a forced re-upload that itself fails still counts — the run
+	// never attempts a second one. Inert for --repo / the no-flag path
+	// (ensureUploaded == nil), where no upload exists to redo.
+	reuploaded := false
+	forceReuploadOnce := func() error {
+		if ensureUploaded == nil || reuploaded {
+			return nil
+		}
+		reuploaded = true
+		return ensureUploaded(true)
+	}
+
 	var tools []toolDef
 	if !customOnly {
 		tools, err = fetchTools(cfg)
@@ -289,8 +391,29 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	}
 
 	prompts, source, err := fetchPrompts(cfg, ov)
+	// Evict-retry: the server's ingested-source cache is in-memory/LRU and does
+	// not survive a restart, so a gated run may skip the upload only for the
+	// list ?source= to find the source gone (a 400 with re-upload guidance). When
+	// that exact condition is detected, force a single re-upload and retry the
+	// list ONCE; if it still 400s, fall through to the clean error below (no
+	// loop). Applies to both --repo-dir and --repo-fetch (ensureUploaded != nil).
+	if err != nil && ensureUploaded != nil && isEvictedSourceError(err, ov) {
+		if upErr := forceReuploadOnce(); upErr != nil {
+			return "", "", upErr
+		}
+		prompts, source, err = fetchPrompts(cfg, ov)
+	}
 	if err != nil {
 		return "", "", err
+	}
+
+	// For a source override (--repo-dir/--repo-fetch) the CLI owns the source
+	// identity: skills must be tagged with the SAME identifier used for the
+	// upload and the ?source= param, not whatever the server echoes back on the
+	// list call. Using the server echo would tag with the server's default
+	// source and break wipe-own-slice for this source.
+	if ov.Source != "" {
+		source = ov.Source
 	}
 
 	if include != "" || exclude != "" {
@@ -379,6 +502,18 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 			continue
 		}
 		rendered, rerr := renderPrompt(cfg, p.Name, ov)
+		// Evict-retry for the render call, mirroring the list path: the in-memory
+		// source cache can be dropped AFTER a successful list but BEFORE a
+		// per-prompt render, which would otherwise degrade that skill to
+		// metadata-only. On a matching evict 400, force a single re-upload
+		// (bounded run-wide by forceReuploadOnce) and retry this render ONCE; if
+		// the re-upload or the retry still fails, fall through to the warn-and-
+		// continue / metadata-only path below — no infinite loop.
+		if rerr != nil && ensureUploaded != nil && isEvictedSourceError(rerr, ov) {
+			if upErr := forceReuploadOnce(); upErr == nil {
+				rendered, rerr = renderPrompt(cfg, p.Name, ov)
+			}
+		}
 		if rerr != nil {
 			// Never fail silently. A request-scoped override 4xx is reframed by
 			// sourceError into an actionable "skills source <repo> rejected: ..."
@@ -683,15 +818,25 @@ func writeRoutingSkill(dir string, content []byte) error {
 }
 
 // RedactURL strips userinfo (user:password@) from a URL string so that any
-// embedded credentials are not echoed to stdout, logs, or CI output. Returns
-// the input unchanged for non-URL values (e.g. "built-in") or parse failures.
+// embedded credentials are not echoed to stdout, logs, or CI output, and it is
+// the ONLY scrub on the --repo-fetch success-path identifier (upload source
+// field, source: frontmatter tag, ?source= param). A parser-only redaction is
+// brittle: net/url returns the input unchanged on a parse error, and may not
+// surface every credential as u.User (a non-RFC-3986 URL, or odd encodings), so
+// a user:token@ could otherwise survive to a sink. To make it belt-and-
+// suspenders, the result is ALSO run through client.RedactCredentials (a regex
+// scrub of any embedded "...@" in free text): on a clean parse it strips any
+// residual credential u.User missed, and on a parse failure / userinfo-less
+// parse it becomes the sole, robust line of defense. For values with no embedded
+// credential (e.g. "built-in" or a plain https URL) RedactCredentials is a
+// no-op, so this stays a faithful pass-through there.
 func RedactURL(s string) string {
 	u, err := url.Parse(s)
 	if err != nil || u.User == nil {
-		return s
+		return client.RedactCredentials(s)
 	}
 	u.User = nil
-	return u.String()
+	return client.RedactCredentials(u.String())
 }
 
 // yamlEscape wraps a string in quotes if it contains YAML-special characters.

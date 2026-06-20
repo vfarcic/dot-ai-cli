@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/vfarcic/dot-ai-cli/internal/client"
@@ -18,6 +19,12 @@ var rootCmd = &cobra.Command{
 	Short:        "CLI for the DevOps AI Toolkit",
 	Long:         "Auto-generated CLI for the DevOps AI Toolkit REST API.\nTalk to your Kubernetes clusters using AI-powered tools.",
 	SilenceUsage: true,
+	// SilenceErrors stops cobra from printing the error itself. Several
+	// RequestError.Message values already embed a leading "Error:" prefix, so
+	// letting cobra prefix again produced "Error: Error: ...". With cobra
+	// silenced, Execute is the single place that prints, via printError, which
+	// normalizes to exactly one prefix.
+	SilenceErrors: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		_ = cmd.Help()
 	},
@@ -31,12 +38,27 @@ func Execute(openapiSpec, routingSkill []byte, version string) {
 	RegisterDynamicCommands(openapiSpec)
 
 	if err := rootCmd.Execute(); err != nil {
+		printError(err)
 		var reqErr *client.RequestError
 		if errors.As(err, &reqErr) {
 			os.Exit(reqErr.ExitCode)
 		}
 		os.Exit(client.ExitUsageError)
 	}
+}
+
+// printError writes err to stderr with exactly one "Error:" prefix. Because
+// rootCmd has SilenceErrors set, this is the only place errors reach the user,
+// so it must always print. Some RequestError.Message values already start with
+// "Error:" while plain fmt.Errorf failures do not; stripping any leading
+// (case-insensitive) "Error:" before re-adding one normalizes both to a single
+// prefix without altering the underlying message wording.
+func printError(err error) {
+	msg := strings.TrimSpace(err.Error())
+	if len(msg) >= 6 && strings.EqualFold(msg[:6], "Error:") {
+		msg = strings.TrimSpace(msg[6:])
+	}
+	fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
 }
 
 func GetConfig() *config.Config {
@@ -56,7 +78,7 @@ func init() {
 
 func initConfig() {
 	if err := cfg.Resolve(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		printError(err)
 		os.Exit(1)
 	}
 

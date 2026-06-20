@@ -128,6 +128,8 @@ For auth tokens specifically, `auth_token` (static) takes priority over `access_
 
 `DOT_AI_GIT_TOKEN` is distinct from the `--token` / `DOT_AI_AUTH_TOKEN` auth token: it is **not** the CLI's API auth. It is the git credential used to clone a `dot-ai skills generate --repo` source, forwarded to the server as the `X-Dot-AI-Git-Token` header **only** when `--repo` is in use. It is never sent on non-override requests and never appears in logs, output, or generated skills. See [Subdirectory, Branch, and Per-Source Credentials](../guides/skills-generation.md#subdirectory-branch-and-per-source-credentials).
 
+For sources the server can't reach, the CLI can fetch them itself with `--repo-fetch` (clone via the host git stack) or `--repo-dir` (read a local directory). `--repo-dir` is opt-in: it requires `DOT_AI_ALLOW_REPO_DIR=1` and honors an optional base-path allowlist in `DOT_AI_REPO_DIR_ALLOW`. See [Which Source Flag?](../guides/skills-generation.md#which-source-flag) for when to prefer each, and the [clone cache](../guides/skills-generation.md#the---repo-fetch-clone-cache) it maintains.
+
 ## Example Configuration
 
 **For local development:**

@@ -26,9 +26,20 @@ func TestMain(m *testing.M) {
 	}
 	binaryPath = abs
 
+	// Isolate the --repo-fetch clone cache (PRD #13 M4) for the whole suite so no
+	// test ever writes to the real ~/.cache. Every runCLI subprocess inherits
+	// this; tests that need to INSPECT the cache layout deterministically still
+	// override XDG_CACHE_HOME with their own t.TempDir() via runCLIWithEnv.
+	cacheRoot, err := os.MkdirTemp("", "dot-ai-e2e-cache-")
+	if err != nil {
+		panic("failed to create cache root: " + err.Error())
+	}
+	os.Setenv("XDG_CACHE_HOME", cacheRoot)
+
 	code := m.Run()
 
 	os.Remove(binaryPath)
+	os.RemoveAll(cacheRoot)
 	os.Exit(code)
 }
 

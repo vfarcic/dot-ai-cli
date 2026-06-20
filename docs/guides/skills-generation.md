@@ -147,14 +147,19 @@ For Claude Code, you can install a hook that automatically regenerates skills at
 dot-ai skills generate --agent claude-code --install-hook
 ```
 
-This adds a `SessionStart` hook to `.claude/settings.json` that runs `dot-ai skills generate --agent claude-code` on session startup. The hook captures the flags you pass — `--custom-only`, `--include`, `--exclude`, `--repo`, `--repo-path`, and `--repo-branch` are forwarded so the hook reproduces the same behavior. The `DOT_AI_GIT_TOKEN` credential is **never** written to `settings.json`; it is read from the environment each time the hook fires:
+This adds a `SessionStart` hook to `.claude/settings.json` that runs `dot-ai skills generate --agent claude-code` on session startup. The hook captures the flags you pass — `--custom-only`, `--include`, `--exclude`, `--repo`, `--repo-path`, `--repo-branch`, and the CLI-side source flags `--repo-fetch`, `--repo-dir` / `--source-label`, and `--no-cache` — so each firing reproduces the same source.
 
 ```bash
 dot-ai skills generate --agent claude-code --install-hook --custom-only --exclude "debug-.*"
-# Hook command: dot-ai skills generate --agent claude-code --custom-only --exclude "debug-.*"
+# Hook command: dot-ai skills generate --agent claude-code --custom-only --exclude 'debug-.*'
 ```
 
-The hook is idempotent — running the command again with the same flags won't create duplicates. Re-running with different flags replaces the existing hook. It merges with any existing settings.
+Secrets and opt-ins are **never** written to `settings.json` — they are read from the environment each time the hook fires, so they must be set per session for the hook to behave the same:
+
+- A `--repo` or `--repo-fetch` URL is stored **credential-scrubbed** (a `user:token@…` URL lands as the bare URL), and `DOT_AI_GIT_TOKEN` is read from the environment.
+- A `--repo-dir` hook does **not** embed `DOT_AI_ALLOW_REPO_DIR` — a committed `settings.json` must not let a clone side-load skills without consent. The opt-in must be set in the environment for the hook to fire (mirroring `DOT_AI_GIT_TOKEN`).
+
+The hook is idempotent — running the command again with the same flags won't create duplicates. Re-running with different flags replaces the existing hook. It merges with any existing settings. See [Which Source Flag?](#which-source-flag) for the flag details.
 
 To compose skills from multiple repos, install one hook per source:
 
@@ -211,6 +216,34 @@ DOT_AI_GIT_TOKEN=$TEAM_TOKEN dot-ai skills generate --agent claude-code --repo h
 Each hook owns its slice. The hook is the scoping unit: each one points at one
 source and carries that source's subdirectory, branch, and credential.
 
+### Which Source Flag?
+
+By default the **server** fetches every skill source: with no flag it clones its
+own configured repo; with `--repo <url>` it clones the override you name. That is
+the right model whenever the server can both **reach** and **authenticate** to the
+source. Two flags — `--repo-fetch` and `--repo-dir` — instead have the **CLI host**
+read the source and upload it for the server to render, for the cases server-side
+fetch can't cover:
+
+| Your source is… | Use | Who fetches |
+|---|---|---|
+| The server's configured default repo | *(no source flag)* | Server |
+| Any repo the server can reach with a **static credential** (public, or private + a token) | `--repo <url>` (+ `DOT_AI_GIT_TOKEN` for private) | Server |
+| A repo only the **CLI host** can reach/authenticate — SSO/OIDC/device-attested VPNs, or a hardened cluster with no egress and no static token | `--repo-fetch <url>` | CLI host |
+| Work-in-progress skills on local disk with no remote at all | `--repo-dir <path> --source-label <label>` | CLI host (no clone) |
+
+**Prefer `--repo` + `DOT_AI_GIT_TOKEN` whenever a static credential reaches the
+source.** `--repo-fetch` and `--repo-dir` are an **escape hatch**, not a general
+alternative to server-side fetch: they exist only for sources the server
+*fundamentally cannot* authenticate or route to (no static token exists, or the
+host simply isn't reachable from the server) and for on-disk source with no
+remote. If a token works, server-side fetch keeps your credentials in one place
+(see [Tradeoffs](#tradeoffs)).
+
+> **Both flags need a matching server.** `--repo-fetch` and `--repo-dir` upload the
+> source to a server **ingestion endpoint** that ships in the same release as this
+> CLI. They are not usable against an older server that lacks it.
+
 ### Subdirectory, Branch, and Per-Source Credentials
 
 A `--repo` source does not have to live at the repo root on the default branch,
@@ -235,10 +268,11 @@ DOT_AI_GIT_TOKEN=$TEAM_TOKEN dot-ai skills generate --agent claude-code \
 
 Key rules:
 
-- **`--repo-path` / `--repo-branch` require `--repo`.** They qualify an
-  override, so supplying either without `--repo` is a usage error:
+- **`--repo-path` / `--repo-branch` require `--repo` or `--repo-fetch`.** They
+  qualify a repo-bearing source, so supplying either alone is a usage error (a
+  local `--repo-dir` takes no subdir/branch qualifier either):
   ```text
-  Error: --repo-path and --repo-branch require --repo
+  Error: --repo-path and --repo-branch require --repo or --repo-fetch
   ```
 - **The credential is forwarded only on override requests.** When
   `DOT_AI_GIT_TOKEN` is set in the environment **and** `--repo` is in use, the
@@ -251,27 +285,200 @@ Key rules:
   does not change the `source` value for a given repo, so skill tagging (and the
   wipe-own-slice behavior) is unaffected.
 
-### Multi-Source Example
+### `--repo-fetch`: Clone From the CLI Host
 
-Compose an org-wide public source with a private cross-realm source that lives
-in a subdirectory on a non-default branch — one hook each:
+`--repo-fetch <git-url>` makes the **CLI** clone the repo using the host's local
+git stack, then upload the resulting source to the server, which renders it
+exactly as it renders a `--repo` source. Use it for a source the server can't
+reach but your laptop can:
 
 ```bash
-# Public, org-wide skills at the repo root on the default branch (no credential).
-dot-ai skills generate --agent claude-code \
-  --repo https://github.com/orgA/skills
-
-# Private skills in a different auth realm, under skills/ on the team-skills
-# branch, authenticated with this hook's own token.
-DOT_AI_GIT_TOKEN=$FORGEJO_TOKEN dot-ai skills generate --agent claude-code \
-  --repo https://forgejo.example.com/team/skills \
-  --repo-path skills \
-  --repo-branch team-skills
+dot-ai skills generate --agent claude-code --repo-fetch https://vpn.corp/team/skills
 ```
 
-Each invocation is self-contained and source-scoped, so the two sets compose
-cleanly: the public run only manages skills tagged with its repo, and the
-private run only manages skills tagged with its repo.
+```text
+Uploaded source as https://vpn.corp/team/skills (ingested)
+Skills generated successfully in .claude/skills
+```
+
+The clone runs through your host's normal git authentication — **SSH agent, the
+`git credential` helper, `~/.gitconfig`, `GIT_SSH_COMMAND`, `GIT_CONFIG_GLOBAL`,
+`GIT_TERMINAL_PROMPT=0`** — so a live SSO session, a device-attested VPN, or an SSH
+key the server will never hold all work. It authenticates via that stack, **not**
+`DOT_AI_GIT_TOKEN` (that token qualifies `--repo` only; pairing it with
+`--repo-fetch` is out of scope).
+
+`--repo-fetch` accepts the same subdirectory/branch qualifiers as `--repo`, plus
+`--no-cache`:
+
+| Flag / option | Effect | Default when omitted |
+|---------------|--------|----------------------|
+| `--repo-path <subdir>` | Upload only this subdirectory of the clone | repo root |
+| `--repo-branch <branch>` | Clone (and upload) this branch | the repo's default branch |
+| `--no-cache` | Clone to a throwaway temp dir, use it, delete it (skip the persistent cache) | use the clone cache |
+
+The `source:` frontmatter is the git URL with **any credentials scrubbed**: a
+`https://user:token@…` URL is tagged, logged, and stored as `https://…`. The
+credential never reaches the server, the frontmatter, stdout/stderr, or the cache
+path (see [Credential Safety](#credential-safety)).
+
+### The `--repo-fetch` Clone Cache
+
+To keep re-runs cheap — a SessionStart hook fires `--repo-fetch` on every session
+— the CLI keeps a persistent clone cache:
+
+- **Location:** `$XDG_CACHE_HOME/dot-ai-cli/repos/<sha256-of-url>/` (defaults to
+  `~/.cache/dot-ai-cli/repos/…`). The directory is created mode `0700` — it can
+  hold private source. The cache key is the **scrubbed** URL, so no credential is
+  ever part of the path.
+- **First run** does a shallow `git clone --depth 1`; **subsequent runs** do an
+  incremental `git fetch` + checkout, so a re-run costs O(diff), not a full
+  re-clone.
+- **Concurrency:** two `--repo-fetch` runs of the *same* URL serialize on a
+  per-URL lock; the second waits, then reuses the first's checkout — no race, no
+  corruption.
+- **Unchanged source skips the upload.** The CLI content-hashes the source and, if
+  it matches the last upload for that identifier, reports `unchanged, skipping
+  upload` instead of re-sending it:
+
+  ```text
+  Source https://vpn.corp/team/skills unchanged, skipping upload
+  Skills generated successfully in .claude/skills
+  ```
+
+- **`--no-cache`** bypasses all of this: it clones to a throwaway temp dir and
+  deletes it after the run, leaving no persistent entry.
+
+#### Pruning the Cache
+
+`dot-ai skills cache prune --older-than <duration>` garbage-collects clone-cache
+entries (and stale upload-state records) whose **last use** is older than a Go
+duration. Last use is refreshed on every successful `--repo-fetch`, so an
+actively-used cache is never pruned — only idle entries. An entry a concurrent
+`--repo-fetch` is using (its per-URL lock is held) is skipped, not deleted.
+
+```bash
+# Remove entries unused for 30 days.
+dot-ai skills cache prune --older-than 720h
+```
+
+```text
+skills cache prune: removed 1 clone-cache and 0 upload-state entries older than 720h0m0s (kept 1, skipped 0 in use)
+```
+
+A missing or empty cache is a clean no-op (exit 0):
+
+```text
+skills cache prune: cache is empty; nothing to prune
+```
+
+`--older-than` is required and takes a [Go duration](https://pkg.go.dev/time#ParseDuration)
+(e.g. `720h`, `30m`); an invalid value exits non-zero with a clear error.
+
+### `--repo-dir`: Read a Local Directory
+
+`--repo-dir <path> --source-label <label>` reads skills straight from a local
+directory — **no network, no clone** — uploads them, and renders them through the
+server. It is the tight dev-loop tool for work-in-progress skills with no remote
+yet:
+
+```bash
+DOT_AI_ALLOW_REPO_DIR=1 dot-ai skills generate --agent claude-code \
+  --repo-dir ./my-skills --source-label team-wip
+```
+
+```text
+Uploaded source as local:alice-team-wip (ingested)
+Skills generated successfully in .claude/skills
+```
+
+`--source-label` is **required** (a filesystem path is not a stable cross-machine
+identifier). Skills are tagged `source: local:<label>`, auto-prefixed with your
+host identity for per-server uniqueness — two laptops uploading `local:team-wip`
+would otherwise overwrite each other in the server's source cache. The prefix is
+resolved in this order:
+
+1. `local:<user>-<label>` — `$USER`, else the OS user.
+2. `local:<host>-<label>` — `$HOSTNAME`, else the system hostname, when no user is
+   known.
+
+So `--source-label team-wip` run by user `alice` produces `source:
+local:alice-team-wip`.
+
+#### Security Model (opt-in, default-off)
+
+`--repo-dir` accepts an arbitrary filesystem path — a side-loading vector for
+arbitrary skill code — so it is **disabled by default** and hardened:
+
+- **`DOT_AI_ALLOW_REPO_DIR=1` is required.** Without it the run refuses (non-zero
+  exit, nothing generated):
+  ```text
+  Error: --repo-dir is opt-in: set DOT_AI_ALLOW_REPO_DIR=1 to allow reading skills from a local directory. It accepts an arbitrary filesystem path (a side-loading vector for arbitrary skill code), so it is disabled by default; prefer --repo with DOT_AI_GIT_TOKEN whenever a static credential reaches the source.
+  ```
+- **Paths under `/tmp` / `$TMPDIR` are refused** — shared, world-writable temp
+  space is a side-loading vector.
+- **World-writable directories (or any world-writable ancestor) are refused** —
+  another user could swap the source out from under you. Tighten with `chmod o-w`.
+- **Optional allowlist:** set `DOT_AI_REPO_DIR_ALLOW` to a colon-separated list of
+  base directories; any `--repo-dir` outside all of them is refused.
+- The source is capped at **100 files / 256 KiB** total (a pre-upload check).
+
+`--repo-dir` without `--source-label` (and vice versa) is a usage error:
+
+```text
+Error: --repo-dir requires --source-label
+```
+
+### Credential Safety
+
+No credential — or credentialed URL — ever reaches a log, stdout/stderr,
+`settings.json`, the clone-cache path, or the generated `source:` frontmatter:
+
+- A `--repo-fetch` (or `--repo`) URL embedding `user:token@…` is scrubbed to its
+  bare form everywhere it surfaces.
+- `--repo-fetch` authenticates through the host git stack; the CLI never reads or
+  transmits those credentials itself.
+- `DOT_AI_GIT_TOKEN` and `DOT_AI_ALLOW_REPO_DIR` are read from the environment at
+  run time and are never persisted into a hook command.
+
+### Tradeoffs
+
+CLI-side fetching moves credentials from the server to each developer's machine.
+That is the point — it serves sources the server can't authenticate — but it
+trades away **centralized credential audit**: with server-side fetch, every
+skill-fetch credential lives in one place to rotate and audit. Organizations that
+need that central control should stay on `--repo` + `DOT_AI_GIT_TOKEN` (plus a
+network-level fix where viable) and reserve `--repo-fetch` / `--repo-dir` for the
+sources that genuinely have no static-credential path.
+
+### Multi-Source Example
+
+Compose all four source types into one skills directory — one hook per source,
+each tagged with its own `source:` so the [wipe-own-slice](#updating-skills) and
+[first-source-wins](#collision-policy-first-source-wins) rules keep them from
+clobbering each other:
+
+```bash
+# 1. The server's configured default repo (no source flag)   -> source: built-in
+dot-ai skills generate --agent claude-code
+
+# 2. An org-wide repo the server clones, with a per-hook token -> source: <url>
+DOT_AI_GIT_TOKEN=$ORG_TOKEN dot-ai skills generate --agent claude-code \
+  --repo https://github.com/orgA/skills
+
+# 3. An SSO-gated repo only the laptop can reach   -> source: <scrubbed-url>
+dot-ai skills generate --agent claude-code \
+  --repo-fetch https://vpn.corp/team/skills
+
+# 4. Work-in-progress skills on local disk  -> source: local:<user>-wip
+DOT_AI_ALLOW_REPO_DIR=1 dot-ai skills generate --agent claude-code \
+  --repo-dir ./my-skills --source-label wip
+```
+
+Each run is self-contained and source-scoped, so the four sets compose cleanly —
+every run manages only the skills tagged with its own `source:`. The first hook
+to write a given skill name wins; later hooks skip that name with a warning (see
+[Collision Policy](#collision-policy-first-source-wins)).
 
 When `--repo` is supplied, the CLI prints the source it received from the
 server, redacted of any userinfo for safety:
@@ -313,7 +520,15 @@ runner to retry).
 
 ### Source Frontmatter
 
-Every generated `SKILL.md` includes a `source:` field:
+Every generated `SKILL.md` includes a `source:` field recording where the skill
+came from. Its value depends on the source flag:
+
+| Source flag | `source:` value | Example (as written on disk) |
+|-------------|-----------------|------------------------------|
+| *(none — env-var default)* | `built-in` | `source: built-in` |
+| `--repo <url>` | the repo URL (credential-scrubbed) | `source: "https://github.com/orgA/skills"` |
+| `--repo-fetch <url>` | the git URL (credential-scrubbed) | `source: "https://vpn.corp/team/skills"` |
+| `--repo-dir … --source-label <label>` | `local:<user>-<label>` (host-prefixed) | `source: "local:alice-team-wip"` |
 
 ```yaml
 ---
@@ -324,9 +539,12 @@ source: built-in
 ---
 ```
 
-The value comes verbatim from the server's response — `built-in` for the
-default repo, or the exact URL you passed to `--repo`. The CLI never modifies
-this value; it must match exactly between writes and subsequent wipes.
+For `built-in` and `--repo`, the value comes from the server's response; for
+`--repo-fetch` and `--repo-dir` the CLI computes it (the scrubbed URL, or the
+`local:` identifier) and sends it as the server's `?source=` identifier. Either
+way the CLI never alters the value between runs — it must match exactly between a
+write and the subsequent wipe, which is what scopes each source's
+[updates](#updating-skills).
 
 ### Legacy File Migration
 

@@ -19,32 +19,100 @@ const (
 	hookEventKey      = "SessionStart"
 )
 
+// HookSource carries the raw per-invocation source-flag values an installed hook
+// must re-emit verbatim so each session-start regenerates the SAME source. It is
+// needed because ov.Source alone cannot reconstruct the original flags: for
+// --repo-dir it is the derived local:<user>-<label> identifier (which loses both
+// the directory path and the label), and for --repo-fetch it is the
+// credential-scrubbed URL. The CLI flag values are passed straight through here
+// (RepoFetch is scrubbed at emit time). No credential or opt-in env var is ever
+// stored — see BuildHookCommand.
+type HookSource struct {
+	RepoFetch   string // --repo-fetch raw URL (emitted RedactURL-scrubbed)
+	RepoDir     string // --repo-dir local directory path
+	SourceLabel string // --source-label (required companion of --repo-dir)
+	NoCache     bool   // --no-cache (only meaningful with --repo-fetch)
+}
+
+// shellQuote wraps a value in POSIX single quotes so a shell that executes the
+// stored hook command treats it as a literal string. A single-quoted shell word
+// undergoes NO expansion — $, backtick, $(...), and ${...} are all inert — which
+// is exactly what closes the M5 shell-injection: BuildHookCommand's output is
+// stored in .claude/settings.json and run BY Claude Code THROUGH A SHELL, where
+// Go %q (double-quote) escaping would still let those metacharacters execute
+// (e.g. a --repo-dir path /x/$(touch /tmp/PWNED) runs the substitution). The
+// only character that cannot appear inside single quotes is a single quote, so
+// it is escaped by the standard POSIX idiom: close the quote, emit a backslash-
+// escaped quote, reopen the quote — i.e. each ' in the value becomes '\''.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // BuildHookCommand constructs the hook command string from the resolved flags,
-// mirroring the arguments passed to `skills generate`. When the override is
-// active it is appended as --repo/--repo-path/--repo-branch so each hook firing
-// remains scoped to the same source (PRD #12 hook-per-source model, extended in
-// PRD #16). The credential is intentionally NOT embedded: it is read from the
-// DOT_AI_GIT_TOKEN env var at hook-run time and must never be written to
-// settings.json.
-func BuildHookCommand(include, exclude string, customOnly bool, ov Override) string {
+// mirroring the arguments passed to `skills generate`. The emitted command is
+// scoped to exactly one source so each hook firing reproduces it (PRD #12
+// hook-per-source model, extended in PRD #16 and PRD #13). Every interpolated
+// value is shell-quoted (see shellQuote) because the command is run through a
+// shell at hook-run time:
+//
+//   - --repo (or no source flag): --repo/--repo-path/--repo-branch are appended
+//     from the override. The --repo URL is credential-SCRUBBED (RedactURL) so a
+//     credentialed URL never reaches settings.json; the token itself is NEVER
+//     embedded — it is read from DOT_AI_GIT_TOKEN at hook-run time.
+//   - --repo-fetch: the credential-SCRUBBED URL (RedactURL) is emitted — a
+//     credentialed URL must never reach settings.json — plus --repo-path/
+//     --repo-branch (which qualify the clone) and --no-cache when set.
+//   - --repo-dir: the directory path and its required --source-label. The
+//     DOT_AI_ALLOW_REPO_DIR opt-in is deliberately NOT embedded; settings.json
+//     is often committed/shared, and baking the opt-in would let anyone who
+//     clones the repo side-load from that path without consent. A --repo-dir
+//     hook therefore reads DOT_AI_ALLOW_REPO_DIR from the env at hook-run time,
+//     exactly like --repo reads DOT_AI_GIT_TOKEN.
+//
+// When no new source flag is set the output is argv-identical to the pre-PRD-13
+// command string (Backward Compatibility): the quoting bytes changed from Go %q
+// double quotes to POSIX single quotes, but the shell parses both to the SAME
+// argument vector.
+func BuildHookCommand(include, exclude string, customOnly bool, ov Override, src HookSource) string {
 	cmd := hookCommandBase
 	if customOnly {
 		cmd += " --custom-only"
 	}
 	if include != "" {
-		cmd += fmt.Sprintf(" --include %q", include)
+		cmd += " --include " + shellQuote(include)
 	}
 	if exclude != "" {
-		cmd += fmt.Sprintf(" --exclude %q", exclude)
+		cmd += " --exclude " + shellQuote(exclude)
 	}
-	if ov.Repo != "" {
-		cmd += fmt.Sprintf(" --repo %q", ov.Repo)
-	}
-	if ov.Path != "" {
-		cmd += fmt.Sprintf(" --repo-path %q", ov.Path)
-	}
-	if ov.Branch != "" {
-		cmd += fmt.Sprintf(" --repo-branch %q", ov.Branch)
+	switch {
+	case src.RepoFetch != "":
+		// Scrub any embedded credential before it can reach settings.json.
+		cmd += " --repo-fetch " + shellQuote(RedactURL(src.RepoFetch))
+		if ov.Path != "" {
+			cmd += " --repo-path " + shellQuote(ov.Path)
+		}
+		if ov.Branch != "" {
+			cmd += " --repo-branch " + shellQuote(ov.Branch)
+		}
+		if src.NoCache {
+			cmd += " --no-cache"
+		}
+	case src.RepoDir != "":
+		cmd += " --repo-dir " + shellQuote(src.RepoDir)
+		cmd += " --source-label " + shellQuote(src.SourceLabel)
+	default:
+		// --repo / no source flag. The --repo URL is scrubbed (RedactURL) so a
+		// credentialed URL never lands in settings.json (the token is read from
+		// DOT_AI_GIT_TOKEN at hook-run time, never embedded).
+		if ov.Repo != "" {
+			cmd += " --repo " + shellQuote(RedactURL(ov.Repo))
+		}
+		if ov.Path != "" {
+			cmd += " --repo-path " + shellQuote(ov.Path)
+		}
+		if ov.Branch != "" {
+			cmd += " --repo-branch " + shellQuote(ov.Branch)
+		}
 	}
 	return cmd
 }
