@@ -3,11 +3,17 @@
 package e2e_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/gofrs/flock"
 )
 
 // --- PRD #13 M1: --repo-fetch / --repo-dir / --source-label flag surface ---
@@ -643,5 +649,352 @@ func TestSkillsGenerate_RepoFetch_RepoPath_SymlinkEscape(t *testing.T) {
 				t.Errorf("expected no skill generated when a symlink --repo-path escapes the clone")
 			}
 		})
+	}
+}
+
+// --- PRD #13 M4a: persistent clone cache, --no-cache, per-URL concurrency ---
+//
+// These exercise the DEFAULT (cached) --repo-fetch path. Each sets its OWN
+// XDG_CACHE_HOME to a t.TempDir() so the cache layout is deterministic and never
+// touches the real ~/.cache. The cache dir for a plain (credential-free) file://
+// url is <root>/dot-ai-cli/repos/<sha256(url)>/, matching repoCacheDir's keying
+// (RedactURL is identity for a url with no embedded credential).
+
+// repoFetchCacheDir computes the persistent cache dir the CLI uses for url under
+// cacheRoot. For a credential-free file:// url, RedactURL(url) == url, so the
+// sha256 is taken over the url verbatim — the same key the implementation uses.
+func repoFetchCacheDir(cacheRoot, url string) string {
+	sum := sha256.Sum256([]byte(url))
+	return filepath.Join(cacheRoot, "dot-ai-cli", "repos", hex.EncodeToString(sum[:]))
+}
+
+// runCLIRaw runs the CLI with a custom environment WITHOUT calling t.Fatalf, so
+// it is safe to invoke from a goroutine (the concurrency test). It returns the
+// combined stdout+stderr and the exit code; err is non-nil only for a failure
+// to start/await the process (not a non-zero CLI exit).
+func runCLIRaw(env []string, args ...string) (combined string, exitCode int, err error) {
+	fullArgs := append([]string{"--server-url", "http://localhost:3001"}, args...)
+	cmd := exec.Command(binaryPath, fullArgs...)
+	cmd.Env = append(os.Environ(), env...)
+	out, runErr := cmd.CombinedOutput()
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			return string(out), exitErr.ExitCode(), nil
+		}
+		return string(out), -1, runErr
+	}
+	return string(out), 0, nil
+}
+
+// M4a-1. Re-run REUSES the cache (fetch, not re-clone). Run 1 creates the cache
+// dir with a real .git. We then drop an unrelated marker INSIDE .git/ and commit
+// a NEW skill to the source. Run 2 must: (a) leave the marker intact — proving
+// the dir was NOT blown away and re-cloned (a re-clone os.RemoveAll's the whole
+// dir, marker included) — and (b) pick up the new commit via the incremental
+// fetch, generating the new skill.
+func TestSkillsGenerate_RepoFetch_Cache_ReuseNotReclone(t *testing.T) {
+	cacheRoot := t.TempDir()
+	env := []string{"XDG_CACHE_HOME=" + cacheRoot}
+	repo := repoFetchGitRepo(t, map[string]string{"wip-fetched-skill/SKILL.md": newFetchedSkillFile})
+	url := fileURL(repo)
+
+	// Run 1: first fetch → clone into the cache.
+	out1 := t.TempDir()
+	combined1, code1, err := runCLIRaw(env, "skills", "generate", "--path", out1, "--custom-only", "--repo-fetch", url)
+	if err != nil {
+		t.Fatalf("run 1 failed to execute: %v", err)
+	}
+	if code1 != 0 {
+		t.Fatalf("run 1 expected exit 0, got %d; output: %s", code1, combined1)
+	}
+	if _, err := os.Stat(filepath.Join(out1, "dot-ai-wip-fetched-skill", "SKILL.md")); err != nil {
+		t.Fatalf("run 1 expected dot-ai-wip-fetched-skill: %v", err)
+	}
+
+	// The cache dir exists with a real .git — the persistent clone.
+	cacheDir := repoFetchCacheDir(cacheRoot, url)
+	gitDir := filepath.Join(cacheDir, ".git")
+	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
+		t.Fatalf("expected a persistent cache clone at %s/.git after run 1 (err=%v)", cacheDir, err)
+	}
+
+	// Drop a marker inside .git that only a re-clone (which removes the whole
+	// cache dir) would destroy; an incremental fetch leaves it untouched.
+	marker := filepath.Join(gitDir, "dot-ai-reuse-marker")
+	if err := os.WriteFile(marker, []byte("survives a fetch, dies in a re-clone"), 0o600); err != nil {
+		t.Fatalf("write reuse marker: %v", err)
+	}
+
+	// Add a brand-new skill to the SOURCE so run 2 must fetch to see it.
+	const secondSkill = `---
+name: wip-second-skill
+description: Added to the source between run 1 and run 2
+---
+WIP-SECOND-MARKER body fetched incrementally on the second run.`
+	writeRepoFiles(t, repo, map[string]string{"wip-second-skill/SKILL.md": secondSkill})
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "commit", "-q", "-m", "second skill")
+
+	// Run 2: must reuse the cache (fetch), not re-clone.
+	out2 := t.TempDir()
+	combined2, code2, err := runCLIRaw(env, "skills", "generate", "--path", out2, "--custom-only", "--repo-fetch", url)
+	if err != nil {
+		t.Fatalf("run 2 failed to execute: %v", err)
+	}
+	if code2 != 0 {
+		t.Fatalf("run 2 expected exit 0, got %d; output: %s", code2, combined2)
+	}
+
+	// (a) The marker survived → the cache was REUSED, not blown away & re-cloned.
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("expected the .git marker to survive run 2 (proof of reuse, not re-clone): %v", err)
+	}
+	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
+		t.Errorf("expected the cache .git to persist after run 2 (err=%v)", err)
+	}
+	// (b) The incremental fetch picked up the new commit.
+	if _, err := os.Stat(filepath.Join(out2, "dot-ai-wip-second-skill", "SKILL.md")); err != nil {
+		t.Errorf("expected run 2 to fetch and generate the newly-committed dot-ai-wip-second-skill: %v", err)
+	}
+}
+
+// M4a-2. --no-cache leaves NO persistent cache entry: it clones to a throwaway
+// temp dir, uses it, and deletes it — and still generates correctly.
+func TestSkillsGenerate_RepoFetch_NoCache_NoPersistentEntry(t *testing.T) {
+	cacheRoot := t.TempDir()
+	env := []string{"XDG_CACHE_HOME=" + cacheRoot}
+	repo := repoFetchGitRepo(t, map[string]string{"wip-fetched-skill/SKILL.md": newFetchedSkillFile})
+	url := fileURL(repo)
+
+	out := t.TempDir()
+	combined, code, err := runCLIRaw(env, "skills", "generate", "--path", out, "--custom-only", "--repo-fetch", url, "--no-cache")
+	if err != nil {
+		t.Fatalf("failed to execute: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("expected exit 0 with --no-cache, got %d; output: %s", code, combined)
+	}
+	// The skill is still generated...
+	if _, err := os.Stat(filepath.Join(out, "dot-ai-wip-fetched-skill", "SKILL.md")); err != nil {
+		t.Fatalf("expected dot-ai-wip-fetched-skill with --no-cache: %v", err)
+	}
+	// ...but no persistent cache entry is left behind.
+	cacheDir := repoFetchCacheDir(cacheRoot, url)
+	if _, err := os.Stat(cacheDir); !os.IsNotExist(err) {
+		t.Errorf("expected NO persistent cache dir with --no-cache, but %s exists (err=%v)", cacheDir, err)
+	}
+}
+
+// M4a-3. Two concurrent --repo-fetch of the SAME url serialize via the per-URL
+// flock: both succeed, the cache is not corrupted, and the second sees a valid
+// checkout (no race/partial). Each run writes to its OWN output dir so the
+// separate output-dir lock never contends — only the per-URL cache lock does.
+//
+// To make the contention DETERMINISTIC (rather than hoping the two subprocesses
+// happen to overlap), the test pre-acquires the very per-URL flock the CLI uses
+// (<cacheDir>.lock, beside the cache dir) and holds it while BOTH subprocesses
+// start. Both block in acquireRepoCacheLock until the gate is released; one then
+// wins, clones, releases, and the other proceeds over the populated cache. Any
+// interleaving still leaves both succeeding, so forcing contention adds no flake.
+func TestSkillsGenerate_RepoFetch_Cache_ConcurrentSerialization(t *testing.T) {
+	cacheRoot := t.TempDir()
+	env := []string{"XDG_CACHE_HOME=" + cacheRoot}
+	repo := repoFetchGitRepo(t, map[string]string{"wip-fetched-skill/SKILL.md": newFetchedSkillFile})
+	url := fileURL(repo)
+
+	// Pre-create the cache parent and grab the per-URL gate lock the CLI will
+	// contend on (repoCacheLockSuffix == ".lock", a sibling of the cache dir), so
+	// both runs below are guaranteed to block on it rather than racing past.
+	cacheDir := repoFetchCacheDir(cacheRoot, url)
+	if err := os.MkdirAll(filepath.Dir(cacheDir), 0o700); err != nil {
+		t.Fatalf("mkdir cache parent: %v", err)
+	}
+	gate := flock.New(cacheDir + ".lock")
+	if ok, err := gate.TryLock(); err != nil || !ok {
+		t.Fatalf("test failed to pre-acquire the per-URL gate lock (ok=%v err=%v)", ok, err)
+	}
+	gateReleased := false
+	releaseGate := func() {
+		if !gateReleased {
+			gateReleased = true
+			_ = gate.Unlock()
+		}
+	}
+	// Belt-and-suspenders: never wedge the lock for the full 5-min CLI timeout if
+	// the test fails before the explicit release below.
+	defer releaseGate()
+
+	out1, out2 := t.TempDir(), t.TempDir()
+	type result struct {
+		combined string
+		code     int
+		err      error
+	}
+	results := make([]result, 2)
+	outs := []string{out1, out2}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			c, code, err := runCLIRaw(env, "skills", "generate", "--path", outs[idx], "--custom-only", "--repo-fetch", url)
+			results[idx] = result{c, code, err}
+		}(i)
+	}
+	// Give both subprocesses time to reach acquireRepoCacheLock and block on the
+	// gate, then open it so they contend on the real per-URL lock simultaneously.
+	time.Sleep(1 * time.Second)
+	releaseGate()
+	wg.Wait()
+
+	// Both runs succeed — the loser of the flock waited and then proceeded.
+	for i, r := range results {
+		if r.err != nil {
+			t.Fatalf("concurrent run %d failed to execute: %v", i, r.err)
+		}
+		if r.code != 0 {
+			t.Fatalf("concurrent run %d expected exit 0, got %d; output: %s", i, r.code, r.combined)
+		}
+		if _, err := os.Stat(filepath.Join(outs[i], "dot-ai-wip-fetched-skill", "SKILL.md")); err != nil {
+			t.Errorf("concurrent run %d expected dot-ai-wip-fetched-skill: %v", i, err)
+		}
+	}
+
+	// The shared cache is intact and has a valid HEAD (no partial/corrupt clone).
+	if fi, err := os.Stat(filepath.Join(cacheDir, ".git")); err != nil || !fi.IsDir() {
+		t.Fatalf("expected an intact cache .git after concurrent runs (err=%v)", err)
+	}
+	head := exec.Command("git", "-C", cacheDir, "rev-parse", "--verify", "HEAD")
+	if out, err := head.CombinedOutput(); err != nil {
+		t.Errorf("expected a valid HEAD in the shared cache after concurrent runs: %v\n%s", err, out)
+	}
+}
+
+// M4a-5. [PRD #13 M4a review fix] The persistent per-URL cache dir holds fetched,
+// possibly-private source, so its mode must be 0700. `git clone` creates the leaf
+// dir under the process umask (measured 0755/0775 — group/world-readable), so the
+// CLI chmods it to 0700; the 0700 parent alone would not protect the leaf's own
+// mode. Assert the <root>/dot-ai-cli/repos/<hash> dir is exactly 0700 after a run.
+func TestSkillsGenerate_RepoFetch_Cache_DirMode0700(t *testing.T) {
+	cacheRoot := t.TempDir()
+	env := []string{"XDG_CACHE_HOME=" + cacheRoot}
+	repo := repoFetchGitRepo(t, map[string]string{"wip-fetched-skill/SKILL.md": newFetchedSkillFile})
+	url := fileURL(repo)
+
+	out := t.TempDir()
+	combined, code, err := runCLIRaw(env, "skills", "generate", "--path", out, "--custom-only", "--repo-fetch", url)
+	if err != nil {
+		t.Fatalf("failed to execute: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; output: %s", code, combined)
+	}
+	cacheDir := repoFetchCacheDir(cacheRoot, url)
+	fi, err := os.Stat(cacheDir)
+	if err != nil {
+		t.Fatalf("expected the persistent cache dir at %s: %v", cacheDir, err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o700 {
+		t.Errorf("expected cache dir mode 0700 (private — holds fetched source), got %#o", perm)
+	}
+}
+
+// M4a-6. [PRD #13 M4a review fix] A --repo-branch CHANGE between two cached runs
+// of the SAME url must check out the new branch. The cache is keyed by url only
+// (not branch), so run 2 REUSES run 1's cache and updateCache's
+// `fetch … <branch>` + `reset --hard FETCH_HEAD` must swing the working tree from
+// branch alpha to branch beta. Run 1 (alpha) generates the alpha-only skill; run 2
+// (beta, same url/cache) must generate the beta-only skill AND drop the alpha one —
+// proving the new branch was fetched and checked out over the reused cache, not a
+// stale alpha tree. A marker dropped in the cache's .git proves run 2 took the
+// incremental reset path (a re-clone would os.RemoveAll the dir, marker included).
+func TestSkillsGenerate_RepoFetch_Cache_RepoBranchChange(t *testing.T) {
+	cacheRoot := t.TempDir()
+	env := []string{"XDG_CACHE_HOME=" + cacheRoot}
+
+	const alphaSkill = `---
+name: wip-alpha-skill
+description: Present only on the alpha branch
+---
+WIP-ALPHA-MARKER body present only on alpha.`
+	const betaSkill = `---
+name: wip-beta-skill
+description: Present only on the beta branch
+---
+WIP-BETA-MARKER body present only on beta.`
+
+	// A repo with two branches, each carrying its OWN branch-only skill, both
+	// forked from a default branch that has neither.
+	repo := repoFetchGitRepo(t, map[string]string{"README.md": "root"})
+	def := gitCurrentBranch(t, repo)
+	runGit(t, repo, "checkout", "-q", "-b", "alpha")
+	writeRepoFiles(t, repo, map[string]string{"wip-alpha-skill/SKILL.md": alphaSkill})
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "commit", "-q", "-m", "alpha skill")
+	runGit(t, repo, "checkout", "-q", def)
+	runGit(t, repo, "checkout", "-q", "-b", "beta")
+	writeRepoFiles(t, repo, map[string]string{"wip-beta-skill/SKILL.md": betaSkill})
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "commit", "-q", "-m", "beta skill")
+	runGit(t, repo, "checkout", "-q", def)
+	url := fileURL(repo)
+
+	// Run 1: clone the repo into the cache on branch alpha.
+	out1 := t.TempDir()
+	combined1, code1, err := runCLIRaw(env, "skills", "generate", "--path", out1, "--custom-only", "--repo-fetch", url, "--repo-branch", "alpha")
+	if err != nil {
+		t.Fatalf("run 1 failed to execute: %v", err)
+	}
+	if code1 != 0 {
+		t.Fatalf("run 1 expected exit 0, got %d; output: %s", code1, combined1)
+	}
+	if _, err := os.Stat(filepath.Join(out1, "dot-ai-wip-alpha-skill", "SKILL.md")); err != nil {
+		t.Fatalf("run 1 expected the alpha-branch skill: %v", err)
+	}
+
+	// Drop a marker in the cache's .git so we can prove run 2 REUSED the cache
+	// (incremental reset path) rather than blowing it away and re-cloning.
+	cacheDir := repoFetchCacheDir(cacheRoot, url)
+	marker := filepath.Join(cacheDir, ".git", "dot-ai-branchchange-marker")
+	if err := os.WriteFile(marker, []byte("survives a reset, dies in a re-clone"), 0o600); err != nil {
+		t.Fatalf("write reuse marker: %v", err)
+	}
+
+	// Run 2: SAME url (same cache), but --repo-branch beta. The reused cache must
+	// fetch beta and reset --hard FETCH_HEAD, swinging the working tree to beta.
+	out2 := t.TempDir()
+	combined2, code2, err := runCLIRaw(env, "skills", "generate", "--path", out2, "--custom-only", "--repo-fetch", url, "--repo-branch", "beta")
+	if err != nil {
+		t.Fatalf("run 2 failed to execute: %v", err)
+	}
+	if code2 != 0 {
+		t.Fatalf("run 2 expected exit 0, got %d; output: %s", code2, combined2)
+	}
+	// The marker survived → run 2 reused the cache via the incremental reset path.
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("expected the .git marker to survive run 2 (proof of incremental reset, not re-clone): %v", err)
+	}
+	// The beta-only skill is present → reset --hard FETCH_HEAD swung to beta...
+	if _, err := os.Stat(filepath.Join(out2, "dot-ai-wip-beta-skill", "SKILL.md")); err != nil {
+		t.Errorf("run 2 expected the beta-branch skill (proof reset --hard FETCH_HEAD swung to beta): %v", err)
+	}
+	// ...and the stale alpha-only skill is gone → the tree fully moved to beta.
+	if _, err := os.Stat(filepath.Join(out2, "dot-ai-wip-alpha-skill")); !os.IsNotExist(err) {
+		t.Errorf("run 2 must NOT carry the stale alpha-branch skill after switching to beta")
+	}
+}
+
+// M4a-4. --no-cache without --repo-fetch is a clean usage error (non-zero exit).
+// It only controls the --repo-fetch clone cache, so it is meaningless alone.
+// Decided in PreRunE, so offline and fast.
+func TestSkillsGenerate_NoCache_RequiresRepoFetch(t *testing.T) {
+	dir := t.TempDir()
+	stdout, stderr, code := runCLI(t, "skills", "generate", "--path", dir, "--no-cache")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for --no-cache without --repo-fetch; stdout: %s stderr: %s", stdout, stderr)
+	}
+	combined := stdout + stderr
+	if !strings.Contains(combined, "--no-cache") || !strings.Contains(combined, "--repo-fetch") {
+		t.Errorf("expected a --no-cache/--repo-fetch requirement error, got: %s", combined)
 	}
 }

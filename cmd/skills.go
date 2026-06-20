@@ -33,6 +33,7 @@ var skillsRepoBranch string
 var skillsRepoFetch string
 var skillsRepoDir string
 var skillsSourceLabel string
+var skillsNoCache bool
 
 // gitTokenEnvVar is the CLI host env var whose value is forwarded as the
 // X-Dot-AI-Git-Token header on prompts-override requests when --repo is in use.
@@ -130,6 +131,12 @@ one agent hook per source.`,
 		if (skillsRepoPath != "" || skillsRepoBranch != "") && skillsRepo == "" && skillsRepoFetch == "" {
 			return fmt.Errorf("--repo-path and --repo-branch require --repo or --repo-fetch")
 		}
+		// --no-cache only controls the --repo-fetch clone cache (skip it, clone to
+		// a throwaway temp dir). It is meaningless for any other source, so reject
+		// it without --repo-fetch (mirrors the qualifier-rule style above).
+		if skillsNoCache && skillsRepoFetch == "" {
+			return fmt.Errorf("--no-cache requires --repo-fetch: it bypasses the --repo-fetch clone cache")
+		}
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -168,7 +175,13 @@ one agent hook per source.`,
 		// ov.Branch/ov.Path are consumed by the clone, not sent as query params.
 		if skillsRepoFetch != "" {
 			identifier := skills.RedactURL(skillsRepoFetch)
-			sourceDir, cleanup, err := skills.CloneRepoFetch(skillsRepoFetch, ov.Branch, ov.Path)
+			// Default: persistent, incremental clone cache (CloneRepoFetchCached).
+			// --no-cache: the M3 path — clone to a throwaway temp dir, use, delete.
+			fetch := skills.CloneRepoFetchCached
+			if skillsNoCache {
+				fetch = skills.CloneRepoFetch
+			}
+			sourceDir, cleanup, err := fetch(skillsRepoFetch, ov.Branch, ov.Path)
 			if err != nil {
 				return err
 			}
@@ -285,6 +298,7 @@ func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsRepoFetch, "repo-fetch", "", "Clone this git repo from the CLI host (using the host's local git stack: SSH agent, git credential helper, ~/.gitconfig) and upload it as the skill source for this invocation — for sources the server cannot reach (e.g. SSO/device-attested VPNs). Accepts optional --repo-path/--repo-branch. The source: frontmatter records the URL with any credentials scrubbed. Mutually exclusive with --repo and --repo-dir.")
 	skillsGenerateCmd.Flags().StringVar(&skillsRepoDir, "repo-dir", "", "Read skills from a local directory and upload them as the skill source for this invocation (no network, no clone), then render via ?source=. Requires --source-label. Opt-in: set DOT_AI_ALLOW_REPO_DIR=1 (paths under /tmp or world-writable dirs are refused; an optional base-path allowlist is set via DOT_AI_REPO_DIR_ALLOW). Mutually exclusive with --repo and --repo-fetch.")
 	skillsGenerateCmd.Flags().StringVar(&skillsSourceLabel, "source-label", "", "Stable identifier for the --repo-dir source. Auto-prefixed with the host identity for per-server uniqueness: 'source: local:<user>-<label>' (falls back to local:<host>-<label>). Required with --repo-dir.")
+	skillsGenerateCmd.Flags().BoolVar(&skillsNoCache, "no-cache", false, "Bypass the --repo-fetch persistent clone cache: clone to a throwaway temp directory, use it, and delete it. By default --repo-fetch maintains an incremental clone cache under the XDG cache dir (~/.cache/dot-ai-cli/repos/). Requires --repo-fetch.")
 	skillsGenerateCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})
