@@ -92,7 +92,10 @@ func TestSkillsGenerate_RepoDir_RequiresOptIn(t *testing.T) {
 func TestSkillsGenerate_RepoDir_EndToEnd_SourceFrontmatter(t *testing.T) {
 	src := repoDirSource(t, map[string]string{"troubleshoot-pod/SKILL.md": argTakingPromptFile})
 	out := t.TempDir()
-	stdout, stderr, code := runCLIWithEnv(t, []string{"DOT_AI_ALLOW_REPO_DIR=1", "USER=tester"},
+	// Isolate the upload-state store (PRD #13 M4b content-hash gating) to a fresh
+	// XDG cache so this run always uploads — independent of any other test that
+	// may have recorded a hash for the same local:tester-foo identifier.
+	stdout, stderr, code := runCLIWithEnv(t, []string{"DOT_AI_ALLOW_REPO_DIR=1", "USER=tester", "XDG_CACHE_HOME=" + t.TempDir()},
 		"skills", "generate", "--path", out, "--custom-only", "--repo-dir", src, "--source-label", "foo")
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d; stdout: %s stderr: %s", code, stdout, stderr)
@@ -273,8 +276,11 @@ func TestSkillsGenerate_RepoDir_WireFormat_SourceParamNotRepo(t *testing.T) {
 	out := t.TempDir()
 
 	const identifier = "local:tester-foo"
+	// Isolate the upload-state store so the M4b content-hash gate never skips the
+	// upload this test asserts on (an unrelated prior run could otherwise have
+	// recorded this identifier's hash in the shared cache).
 	stdout, stderr, code := runCLIAtServer(t, cs.URL,
-		[]string{"DOT_AI_ALLOW_REPO_DIR=1", "USER=tester"},
+		[]string{"DOT_AI_ALLOW_REPO_DIR=1", "USER=tester", "XDG_CACHE_HOME=" + t.TempDir()},
 		"skills", "generate", "--path", out, "--custom-only", "--repo-dir", src, "--source-label", "foo")
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d; stdout: %s stderr: %s", code, stdout, stderr)

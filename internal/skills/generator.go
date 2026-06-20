@@ -216,6 +216,38 @@ func sourceError(err error, o Override) error {
 	}
 }
 
+// isEvictedSourceError reports whether err is the specific 400 the server
+// returns when a ?source= override names an ingested source it no longer holds
+// (the in-memory LRU evicted it or a restart cleared it). It is the trigger for
+// the single force-re-upload + retry in Generate, so it is deliberately narrow:
+//
+//   - only for an active SOURCE override (ov.Source != "") — a --repo override
+//     never uploads, so its 400s must keep flowing to the clean error path;
+//   - status 400 exactly (the server's VALIDATION_ERROR for an unknown source);
+//   - the message both mentions "upload" AND points at the ingestion endpoint
+//     (POST /api/v1/prompts/sources) — the server's re-upload guidance, not any
+//     other 400 (an over-limit upload, a bad path, etc.).
+//
+// Matching the guidance text (not just the status) keeps an unrelated 400 from
+// triggering a pointless re-upload loop. err is the already-reframed error from
+// fetchPrompts (sourceError preserves Status and folds the server message into
+// Message), so both substrings are still present to match.
+func isEvictedSourceError(err error, ov Override) bool {
+	if ov.Source == "" {
+		return false
+	}
+	re, ok := err.(*client.RequestError)
+	if !ok || re.Status != 400 {
+		return false
+	}
+	// err is always the reframed error from fetchPrompts → sourceError, which
+	// folds the server message into Message and leaves ServerMessage empty, so
+	// Message is the only field that ever carries the guidance text to match.
+	msg := re.Message
+	return strings.Contains(strings.ToLower(msg), "upload") &&
+		strings.Contains(msg, "/api/v1/prompts/sources")
+}
+
 // RefreshPrompts asks the server to pull the latest prompts from the
 // configured git repository, busting the server-side cache. When the override
 // is active, repo/path/branch are sent as JSON body fields and the credential
@@ -292,7 +324,7 @@ func filterByName(names []string, include, exclude string) ([]string, error) {
 // untouched. Cross-source name collisions are resolved first-source-wins with
 // a warning to stderr. An exclusive file lock on <outDir>/.dot-ai.lock
 // serializes concurrent invocations.
-func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte, ov Override) (string, string, error) {
+func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte, ov Override, ensureUploaded func(force bool) error) (string, string, error) {
 	outDir, err := resolveDir(agent, path)
 	if err != nil {
 		return "", "", err
@@ -314,6 +346,17 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	}
 	defer lock.Release()
 
+	// For a CLI-uploaded source (--repo-dir/--repo-fetch) ensureUploaded gates
+	// the upload on the source's content hash: the first ever run uploads, an
+	// unchanged source skips, a changed source re-uploads. It MUST run before the
+	// list/render calls below, which resolve the source from the server's cache
+	// via ?source=. Nil for --repo / the no-flag path (no upload to gate).
+	if ensureUploaded != nil {
+		if err := ensureUploaded(false); err != nil {
+			return "", "", err
+		}
+	}
+
 	var tools []toolDef
 	if !customOnly {
 		tools, err = fetchTools(cfg)
@@ -323,6 +366,18 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	}
 
 	prompts, source, err := fetchPrompts(cfg, ov)
+	// Evict-retry: the server's ingested-source cache is in-memory/LRU and does
+	// not survive a restart, so a gated run may skip the upload only for the
+	// list ?source= to find the source gone (a 400 with re-upload guidance). When
+	// that exact condition is detected, force a single re-upload and retry the
+	// list ONCE; if it still 400s, fall through to the clean error below (no
+	// loop). Applies to both --repo-dir and --repo-fetch (ensureUploaded != nil).
+	if err != nil && ensureUploaded != nil && isEvictedSourceError(err, ov) {
+		if upErr := ensureUploaded(true); upErr != nil {
+			return "", "", upErr
+		}
+		prompts, source, err = fetchPrompts(cfg, ov)
+	}
 	if err != nil {
 		return "", "", err
 	}

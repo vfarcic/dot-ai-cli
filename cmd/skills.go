@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/vfarcic/dot-ai-cli/internal/auth"
@@ -43,6 +44,63 @@ var skillsCmd = &cobra.Command{
 	Use:   "skills",
 	Short: "Manage agent skills",
 	Long:  "Generate and manage skills for AI coding agents (Claude Code, Cursor, Windsurf).",
+}
+
+// skillsCachePruneOlderThan holds the --older-than duration for `skills cache prune`.
+var skillsCachePruneOlderThan string
+
+var skillsCacheCmd = &cobra.Command{
+	Use:   "cache",
+	Short: "Manage the --repo-fetch clone cache",
+	Long: `Inspect and prune the persistent --repo-fetch clone cache.
+
+--repo-fetch maintains an incremental clone cache under the XDG cache dir
+(~/.cache/dot-ai-cli/repos/) plus a small upload-state store
+(~/.cache/dot-ai-cli/uploads/) used to skip re-uploading an unchanged source.`,
+}
+
+var skillsCachePruneCmd = &cobra.Command{
+	Use:   "prune",
+	Short: "Remove clone-cache entries older than a duration",
+	Long: `Remove --repo-fetch clone-cache entries whose last use is older than
+--older-than, plus any upload-state records older than the same threshold.
+
+Last use is updated on every successful --repo-fetch sync, so an actively-used
+cache is never pruned — only idle entries. An entry a concurrent --repo-fetch is
+using (its per-URL lock is held) is skipped, not deleted. A missing or empty
+cache is a no-op (exit 0). --older-than takes a Go duration (e.g. 720h, 30m).`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		raw := strings.TrimSpace(skillsCachePruneOlderThan)
+		if raw == "" {
+			return fmt.Errorf("--older-than is required (a Go duration, e.g. 720h)")
+		}
+		maxAge, err := time.ParseDuration(raw)
+		if err != nil {
+			return fmt.Errorf("invalid --older-than %q: %v (use a Go duration, e.g. 720h, 30m)", skillsCachePruneOlderThan, err)
+		}
+		if maxAge < 0 {
+			return fmt.Errorf("invalid --older-than %q: the duration must not be negative", skillsCachePruneOlderThan)
+		}
+
+		res, err := skills.PruneRepoCache(maxAge)
+		if err != nil {
+			return err
+		}
+
+		out := cmd.OutOrStdout()
+		if !res.Removed() {
+			if res.ReposMissing && res.ReposScanned == 0 {
+				fmt.Fprintln(out, "skills cache prune: cache is empty; nothing to prune")
+				return nil
+			}
+			fmt.Fprintf(out, "skills cache prune: nothing to prune (kept %d, skipped %d in use)\n",
+				res.ReposKept, res.ReposLocked)
+			return nil
+		}
+		fmt.Fprintf(out, "skills cache prune: removed %d clone-cache and %d upload-state entries older than %s (kept %d, skipped %d in use)\n",
+			res.ReposPruned, res.UploadsPruned, maxAge, res.ReposKept, res.ReposLocked)
+		return nil
+	},
 }
 
 var skillsGenerateCmd = &cobra.Command{
@@ -141,6 +199,12 @@ one agent hook per source.`,
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ov := buildOverride()
+		// ensureUploaded gates the CLI-uploaded source (--repo-dir/--repo-fetch)
+		// inside Generate: it hash-skips an unchanged source and is re-callable
+		// with force=true for the evict-driven re-upload+retry. Nil for --repo /
+		// the no-flag path (no upload to gate). The upload is deferred into
+		// Generate so the source stays readable for that retry.
+		var ensureUploaded func(force bool) error
 		// --repo-dir (M2): read the local directory and upload it to the
 		// ingestion endpoint, then drive list+render through ?source=<identifier>.
 		// The identifier is used identically for the upload, the source:
@@ -154,25 +218,18 @@ one agent hook per source.`,
 			if err != nil {
 				return err
 			}
-			status, err := skills.UploadLocalSource(GetConfig(), resolved, identifier)
-			if err != nil {
-				return err
-			}
-			if status != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Uploaded local source as %s (%s)\n", identifier, status)
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Uploaded local source as %s\n", identifier)
-			}
 			ov.Source = identifier
+			ensureUploaded = skills.NewLocalSourceUploader(GetConfig(), resolved, identifier, cmd.OutOrStdout())
 		}
 		// --repo-fetch (M3): clone the repo with the HOST git stack into a temp
-		// dir, then feed that clone into the same upload/list/render chain as
-		// --repo-dir. The identifier is the credential-scrubbed URL (RedactURL),
-		// used identically for the upload source field, the source: frontmatter
-		// tag, and the ?source= param — credentials never reach the server,
-		// frontmatter, logs, or stdout/stderr. --repo-branch/--repo-path qualify
-		// the CLONE here (the server only ever renders the uploaded result), so
-		// ov.Branch/ov.Path are consumed by the clone, not sent as query params.
+		// dir (or the persistent cache), then feed that clone into the same
+		// upload/list/render chain as --repo-dir. The identifier is the
+		// credential-scrubbed URL (RedactURL), used identically for the upload
+		// source field, the source: frontmatter tag, and the ?source= param —
+		// credentials never reach the server, frontmatter, logs, or
+		// stdout/stderr. --repo-branch/--repo-path qualify the CLONE here (the
+		// server only ever renders the uploaded result), so ov.Branch/ov.Path are
+		// consumed by the clone, not sent as query params.
 		if skillsRepoFetch != "" {
 			identifier := skills.RedactURL(skillsRepoFetch)
 			// Default: persistent, incremental clone cache (CloneRepoFetchCached).
@@ -185,17 +242,11 @@ one agent hook per source.`,
 			if err != nil {
 				return err
 			}
+			// Keep the clone/copy alive through Generate — the evict-retry re-reads
+			// it — and clean it up only after the whole run returns.
 			defer cleanup()
-			status, err := skills.UploadLocalSource(GetConfig(), sourceDir, identifier)
-			if err != nil {
-				return err
-			}
-			if status != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Uploaded local source as %s (%s)\n", identifier, status)
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Uploaded local source as %s\n", identifier)
-			}
 			ov.Source = identifier
+			ensureUploaded = skills.NewLocalSourceUploader(GetConfig(), sourceDir, identifier, cmd.OutOrStdout())
 		}
 		if skillsPullLatest {
 			loaded, err := skills.RefreshPrompts(GetConfig(), ov)
@@ -212,7 +263,7 @@ one agent hook per source.`,
 		if err != nil {
 			return err
 		}
-		outDir, source, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, customOnly, RoutingSkill, ov)
+		outDir, source, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, customOnly, RoutingSkill, ov, ensureUploaded)
 		if err != nil {
 			return err
 		}
@@ -303,6 +354,10 @@ func init() {
 		return agentNames(), cobra.ShellCompDirectiveNoFileComp
 	})
 
+	skillsCachePruneCmd.Flags().StringVar(&skillsCachePruneOlderThan, "older-than", "", "Remove cache entries whose last use is older than this Go duration (e.g. 720h, 30m). Required.")
+	skillsCacheCmd.AddCommand(skillsCachePruneCmd)
+
 	skillsCmd.AddCommand(skillsGenerateCmd)
+	skillsCmd.AddCommand(skillsCacheCmd)
 	rootCmd.AddCommand(skillsCmd)
 }

@@ -451,7 +451,7 @@ WIP-BRANCH-MARKER body present only on team-skills.`
 
 // 4. --repo-path qualifies --repo-fetch: only the named subdir is uploaded. The
 // sub-dir skill is generated; a root-level skill OUTSIDE the subdir is excluded —
-// proof UploadLocalSource was handed <clone>/<repo-path>, not the whole clone.
+// proof the uploader was handed <clone>/<repo-path>, not the whole clone.
 func TestSkillsGenerate_RepoFetch_RepoPath(t *testing.T) {
 	const subSkill = `---
 name: wip-sub-skill

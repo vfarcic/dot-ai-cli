@@ -461,17 +461,12 @@ func contentHash(items []hashSource) string {
 	return "sha256:" + fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// UploadLocalSource reads the local directory, uploads its contents to the
-// ingestion endpoint under identifier, and returns the server-reported status
-// ("ingested" or "unchanged"). The directory must already have been authorized
-// via AuthorizeRepoDir. identifier is the SAME string used for the ?source=
-// param and the source: frontmatter tag.
-func UploadLocalSource(cfg *config.Config, dir, identifier string) (string, error) {
-	files, hash, err := readLocalSource(dir)
-	if err != nil {
-		return "", err
-	}
-
+// uploadSource POSTs an already-read file set + contentHash to the ingestion
+// endpoint under identifier and returns the server-reported status ("ingested"
+// or "unchanged"). Splitting it out lets NewLocalSourceUploader read+hash the
+// tree once and reuse that single read for both the gate decision and the
+// upload (so an unchanged source is hashed, not re-walked-then-re-walked).
+func uploadSource(cfg *config.Config, identifier string, files []sourceFile, hash string) (string, error) {
 	payload, err := json.Marshal(sourceUploadRequest{
 		Source:      identifier,
 		ContentHash: hash,
@@ -497,6 +492,69 @@ func UploadLocalSource(cfg *config.Config, dir, identifier string) (string, erro
 		}
 	}
 	return resp.Data.Status, nil
+}
+
+// NewLocalSourceUploader returns an ensureUploaded(force) closure that gates the
+// upload of the local source at dir (under identifier) on its content hash. The
+// tree is read + hashed at most ONCE (memoized across calls), so an unchanged
+// source is never walked twice and the gated call and an evict-retry forced call
+// share the same read.
+//
+//   - force == false (the normal pre-list call): upload only if the source's
+//     contentHash differs from the last-uploaded hash recorded in the
+//     upload-state store; otherwise SKIP and report "unchanged". A missing
+//     record (first-ever run, pruned state) always uploads — the gate never
+//     skips an upload the server might be missing.
+//   - force == true (the evict-retry): always upload, regardless of the stored
+//     hash, because the server has signalled it no longer holds the source.
+//
+// Each real upload records the new hash; a skip touches the record so an
+// actively-used source stays fresh for `cache prune`. Human-facing status lines
+// are written to out (the caller's stdout), never to a log. dir must already be
+// authorized (--repo-dir) or a throwaway clone copy (--repo-fetch).
+func NewLocalSourceUploader(cfg *config.Config, dir, identifier string, out io.Writer) func(force bool) error {
+	var (
+		files   []sourceFile
+		hash    string
+		readErr error
+		didRead bool
+	)
+	readOnce := func() error {
+		if !didRead {
+			files, hash, readErr = readLocalSource(dir)
+			didRead = true
+		}
+		return readErr
+	}
+
+	return func(force bool) error {
+		if err := readOnce(); err != nil {
+			return err
+		}
+		if !force {
+			if stored := readUploadedHash(identifier); stored != "" && stored == hash {
+				touchUploadState(identifier)
+				fmt.Fprintf(out, "Local source %s unchanged, skipping upload\n", identifier)
+				return nil
+			}
+		} else {
+			fmt.Fprintf(out, "Server no longer has source %s; re-uploading\n", identifier)
+		}
+
+		status, err := uploadSource(cfg, identifier, files, hash)
+		if err != nil {
+			return err
+		}
+		// Best-effort: a failed state write only costs a redundant upload next
+		// run, so it must not fail an otherwise-successful generate.
+		_ = writeUploadedHash(identifier, hash)
+		if status != "" {
+			fmt.Fprintf(out, "Uploaded local source as %s (%s)\n", identifier, status)
+		} else {
+			fmt.Fprintf(out, "Uploaded local source as %s\n", identifier)
+		}
+		return nil
+	}
 }
 
 // reframeUploadError turns a request-scoped 4xx from the ingestion endpoint into

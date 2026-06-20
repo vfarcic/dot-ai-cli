@@ -72,7 +72,7 @@ func runGit(args ...string) (stderr string, timedOut bool, err error) {
 // The CLI clones the requested repo using the host's local git stack (SSH agent,
 // git credential helper, ~/.gitconfig, GIT_SSH_COMMAND, GIT_CONFIG_GLOBAL, …) and
 // then feeds the clone into the SAME upload/list/render chain that --repo-dir
-// uses (UploadLocalSource → ?source=<identifier>). This serves sources the
+// uses (NewLocalSourceUploader → ?source=<identifier>). This serves sources the
 // SERVER cannot reach but the CLI host can (SSO / device-attested VPNs, etc.).
 //
 // The temp-clone path below ("clone to a temp dir, use it, delete it") is the M3
@@ -85,7 +85,7 @@ func runGit(args ...string) (stderr string, timedOut bool, err error) {
 // ever lets a raw, possibly-credentialed URL or raw git stderr reach output.
 
 // CloneRepoFetch shallow-clones rawURL into a fresh temp directory using the
-// host's git binary and returns the directory to hand to UploadLocalSource plus
+// host's git binary and returns the directory to hand to NewLocalSourceUploader plus
 // a cleanup func the caller MUST defer. This is the --no-cache path: no
 // persistent cache, no incremental fetch, no per-URL flock — clone, use, delete.
 // When subPath is set, the returned dir is <cloneDir>/<subPath> (validated to be
@@ -134,8 +134,8 @@ func CloneRepoFetch(rawURL, branch, subPath string) (sourceDir string, cleanup f
 	// The clone's .git directory is VCS metadata, not skill source. Uploading it
 	// would burn the ingestion budget (100 files / 256 KiB) on git internals — and
 	// on any repo with real history it would spuriously exceed those limits — so
-	// strip it before UploadLocalSource walks the tree. (Reuses UploadLocalSource
-	// untouched; this only prunes our own throwaway temp clone.)
+	// strip it before readLocalSource walks the tree. (This only prunes our own
+	// throwaway temp clone.)
 	if rmErr := os.RemoveAll(filepath.Join(cloneDir, ".git")); rmErr != nil {
 		cleanup()
 		return "", noop, &client.RequestError{
@@ -205,6 +205,9 @@ func CloneRepoFetchCached(rawURL, branch, subPath string) (sourceDir string, cle
 	if serr := syncCache(cacheDir, rawURL, branch); serr != nil {
 		return "", noop, serr
 	}
+	// Record this run as the cache entry's last use so `skills cache prune
+	// --older-than` keeps an actively-used cache and only reaps idle ones.
+	touchCache(cacheDir)
 
 	// Resolve the subdir on the REAL cached tree (so EvalSymlinks containment
 	// runs against actual repo content), then export a throwaway, .git-free copy
@@ -238,25 +241,27 @@ func CloneRepoFetchCached(rawURL, branch, subPath string) (sourceDir string, cle
 }
 
 // repoCacheDir resolves the persistent clone-cache directory for a source.
-// Root = $XDG_CACHE_HOME when set (checked first so it wins on EVERY platform,
-// including macOS where os.UserCacheDir ignores it), else os.UserCacheDir()
-// (Linux → ~/.cache). Per-repo dir = <root>/dot-ai-cli/repos/<sha256(identifier)>
-// where identifier is the credential-SCRUBBED url, so the path is stable across
-// credential rotation and never embeds a secret.
+// Per-repo dir = <cacheBase>/repos/<sha256(identifier)> where cacheBase is the
+// shared XDG-respecting root (see cacheBaseDir) and identifier is the
+// credential-SCRUBBED url, so the path is stable across credential rotation and
+// never embeds a secret.
 func repoCacheDir(identifier string) (string, error) {
-	root := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME"))
-	if root == "" {
-		var err error
-		root, err = os.UserCacheDir()
-		if err != nil {
-			return "", &client.RequestError{
-				Message:  fmt.Sprintf("Error: failed to resolve the --repo-fetch cache directory: %v", err),
-				ExitCode: client.ExitToolError,
-			}
-		}
+	base, err := cacheBaseDir()
+	if err != nil {
+		return "", err
 	}
 	sum := sha256.Sum256([]byte(identifier))
-	return filepath.Join(root, "dot-ai-cli", "repos", hex.EncodeToString(sum[:])), nil
+	return filepath.Join(base, "repos", hex.EncodeToString(sum[:])), nil
+}
+
+// touchCache bumps cacheDir's mtime to now after a successful sync, so
+// `skills cache prune --older-than` measures LAST USE rather than creation: an
+// incremental fetch with no on-disk diff would otherwise leave the dir mtime
+// frozen at clone time and make an actively-used cache look stale. Best-effort —
+// a chtimes failure never fails the run.
+func touchCache(cacheDir string) {
+	now := time.Now()
+	_ = os.Chtimes(cacheDir, now, now)
 }
 
 // syncCache brings the cache dir up to date with the requested ref. A usable
@@ -450,7 +455,7 @@ func cloneFailureMessage(rawURL, stderr string, timedOut bool) string {
 // repoFetchSubdir resolves a --repo-path subdirectory inside the clone, refusing
 // anything that is not a clean relative path contained in cloneDir (absolute
 // paths or any "../" escape) and requiring it to exist as a directory. The
-// returned path is what gets handed to UploadLocalSource.
+// returned path is what gets handed to the source uploader.
 //
 // A LEXICAL check alone is not enough: the clone is attacker-controlled content,
 // so a committed symlink — possibly an INTERMEDIATE component of --repo-path
