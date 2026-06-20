@@ -362,9 +362,20 @@ func freshClone(cacheDir, rawURL, branch string) error {
 	}
 	// Scrub any credential out of the persisted remote. Only needed when the url
 	// actually carried one; the live url is still used (passed explicitly) for
-	// future fetches, so auth is unaffected.
+	// future fetches, so auth is unaffected. If the scrub FAILS we must not leave
+	// a credentialed .git/config on disk (the credential-at-rest guarantee), so
+	// blow the just-created cache away and surface a credential-scrubbed error
+	// rather than silently persisting the secret. The message carries neither the
+	// raw url nor git stderr (both could echo the credential) — only the scrubbed
+	// identifier.
 	if scrubbed := RedactURL(rawURL); scrubbed != rawURL {
-		_, _, _ = runGit("-C", cacheDir, "remote", "set-url", "origin", scrubbed)
+		if _, _, scrubErr := runGit("-C", cacheDir, "remote", "set-url", "origin", scrubbed); scrubErr != nil {
+			os.RemoveAll(cacheDir) // never leave a credentialed remote persisted
+			return &client.RequestError{
+				Message:  fmt.Sprintf("Error: failed to scrub credentials from the --repo-fetch cache for %s", scrubbed),
+				ExitCode: client.ExitToolError,
+			}
+		}
 	}
 	return nil
 }

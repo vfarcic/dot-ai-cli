@@ -28,6 +28,23 @@ import (
 // embedded (a --repo-dir hook reads it from the env at hook-run time), and a
 // shell metacharacter in a stored value is treated as inert DATA, never executed.
 
+// hermeticEnviron returns os.Environ() with every DOT_AI_*-prefixed entry
+// removed. The hook round-trip tests assert behavior that DOT_AI_* env vars
+// (DOT_AI_ALLOW_REPO_DIR, DOT_AI_SKILLS_*, DOT_AI_GIT_TOKEN, …) directly affect,
+// so an ambient one leaking in from the dev/CI shell could flip a result. The
+// only DOT_AI_* the subprocess should see are the test-specific ones the caller
+// appends on top of this base.
+func hermeticEnviron() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "DOT_AI_") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return env
+}
+
 // runCLIInDir runs the CLI in a specific working directory (so a relative
 // --agent claude-code writes .claude/ there) with the given extra env.
 func runCLIInDir(t *testing.T, dir string, env []string, args ...string) (stdout, stderr string, code int) {
@@ -35,7 +52,7 @@ func runCLIInDir(t *testing.T, dir string, env []string, args ...string) (stdout
 	full := append([]string{"--server-url", "http://localhost:3001"}, args...)
 	cmd := exec.Command(binaryPath, full...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = append(hermeticEnviron(), env...)
 	var o, e strings.Builder
 	cmd.Stdout = &o
 	cmd.Stderr = &e
@@ -134,7 +151,7 @@ func rerunHookCommand(t *testing.T, env []string, command string) (workdir, stdo
 	workdir = t.TempDir()
 	cmd := exec.Command("sh", "-c", shQuote(binaryPath)+rest)
 	cmd.Dir = workdir
-	cmd.Env = append(os.Environ(), append([]string{"DOT_AI_URL=http://localhost:3001"}, env...)...)
+	cmd.Env = append(hermeticEnviron(), append([]string{"DOT_AI_URL=http://localhost:3001"}, env...)...)
 	var o, e strings.Builder
 	cmd.Stdout = &o
 	cmd.Stderr = &e
@@ -548,6 +565,50 @@ func TestSkillsGenerate_M5_InstallHook_ShellInjection_NotExecuted(t *testing.T) 
 		// repo, and regenerated the source tagged with that URL.
 		if got := readSkillSource(t, filepath.Join(workdir, ".claude", "skills", "dot-ai-wip-fetched-skill", "SKILL.md")); got != url {
 			t.Errorf("re-run expected dot-ai-wip-fetched-skill tagged source %q, got %q", url, got)
+		}
+	})
+
+	// CodeRabbit fix [5]: BuildHookCommand also shellQuotes the legacy/qualifier
+	// flags (--repo, --repo-path, --repo-branch, --include, --exclude), so a
+	// regression in any of THOSE branches would reopen the injection. Cover a
+	// representative one (--include) with the same guarantee: a payload-bearing
+	// value is stored verbatim as DATA and is inert when the hook runs through a
+	// shell. The payload is a valid Go regexp (it just matches nothing), so the
+	// CLI accepts it as a filter at both install and replay.
+	t.Run("include", func(t *testing.T) {
+		const marker = "PWNED_include"
+		// Payload doubles as a no-match regexp filter. With the old Go %q (double-
+		// quote) emission a shell would expand $(touch${IFS}PWNED_include) on
+		// replay; single-quoting keeps it inert.
+		payload := "evil$(touch${IFS}" + marker + ")"
+
+		// Clear ambient skills-filter env so the emitted command is deterministic
+		// (only the --include we pass should appear).
+		env := []string{
+			"DOT_AI_SKILLS_INCLUDE=",
+			"DOT_AI_SKILLS_EXCLUDE=",
+			"DOT_AI_SKILLS_CUSTOM_ONLY=",
+		}
+		installDir := t.TempDir()
+		_, stderr, code := runCLIInDir(t, installDir, env,
+			"skills", "generate", "--agent", "claude-code", "--install-hook", "--custom-only", "--include", payload)
+		if code != 0 {
+			t.Fatalf("install with a payload-bearing --include must succeed (valid regexp, no shell at build), got exit %d; stderr: %s", code, stderr)
+		}
+
+		command, raw := readHookCommand(t, installDir)
+		// Stored as DATA: the literal payload survives verbatim into settings.json.
+		if !strings.Contains(raw, payload) {
+			t.Fatalf("expected the literal --include payload stored verbatim in settings.json, got: %s", raw)
+		}
+
+		workdir, rout, rerr, rcode := rerunHookCommand(t, env, command)
+		// No execution: the $(...) must never have run, anywhere we can observe.
+		assertNoMarker(t, marker, workdir, installDir, base)
+		// Inert data: replaying the single-quoted --include through a shell still
+		// succeeds (the value reached the CLI's regexp filter as one literal arg).
+		if rcode != 0 {
+			t.Fatalf("re-running the payload-bearing --include hook must succeed (the value is data), got exit %d; stdout: %s stderr: %s", rcode, rout, rerr)
 		}
 	})
 }

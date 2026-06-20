@@ -179,12 +179,16 @@ func (o Override) bodyParams() []client.Param {
 	return params
 }
 
-// headers returns the credential header, forwarded only when the override is
-// active and a token is set. A no-override run (or a run with no token) sends
-// no header — the header is inert server-side without a repo, so the CLI never
-// sends it on non-override requests.
+// headers returns the credential header, forwarded only when a REPO override is
+// in play (o.Repo != "") and a token is set. The git token is meaningful only
+// for a server-side clone of o.Repo; gating on Repo specifically — not active()
+// — means a source-only override (--repo-dir/--repo-fetch, where active() is
+// true via Source) never forwards it, even if a Token somehow rode along.
+// active() still governs ?source= emission (queryParams), so source overrides
+// keep working; only the credential is withheld. A no-override run, a
+// source-only run, or a run with no token sends no header.
 func (o Override) headers() map[string]string {
-	if !o.active() || o.Token == "" {
+	if o.Repo == "" || o.Token == "" {
 		return nil
 	}
 	return map[string]string{gitTokenHeader: o.Token}
@@ -229,9 +233,12 @@ func sourceError(err error, o Override) error {
 //     other 400 (an over-limit upload, a bad path, etc.).
 //
 // Matching the guidance text (not just the status) keeps an unrelated 400 from
-// triggering a pointless re-upload loop. err is the already-reframed error from
-// fetchPrompts (sourceError preserves Status and folds the server message into
-// Message), so both substrings are still present to match.
+// triggering a pointless re-upload loop. It is used on two call paths: the
+// reframed error from fetchPrompts (sourceError preserves Status and folds the
+// server message into Message) AND the raw per-prompt renderPrompt error (which
+// keeps the guidance in both Message — "Error: request failed (400): <guidance>"
+// — and ServerMessage). Either way Message carries the guidance text, so
+// matching on Message alone covers both.
 func isEvictedSourceError(err error, ov Override) bool {
 	if ov.Source == "" {
 		return false
@@ -240,9 +247,9 @@ func isEvictedSourceError(err error, ov Override) bool {
 	if !ok || re.Status != 400 {
 		return false
 	}
-	// err is always the reframed error from fetchPrompts → sourceError, which
-	// folds the server message into Message and leaves ServerMessage empty, so
-	// Message is the only field that ever carries the guidance text to match.
+	// On both call paths Message carries the guidance text: the list path folds
+	// the server message into Message via sourceError, and the raw render path's
+	// Message embeds it as "Error: request failed (400): <guidance>".
 	msg := re.Message
 	return strings.Contains(strings.ToLower(msg), "upload") &&
 		strings.Contains(msg, "/api/v1/prompts/sources")
@@ -357,6 +364,24 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 		}
 	}
 
+	// forceReuploadOnce performs the evicted-source recovery re-upload at most
+	// ONCE per run. The server's ingested-source cache is in-memory/LRU and can
+	// drop the source between the gated upload and a later list/render call; both
+	// the list evict-retry and every per-prompt render evict-retry funnel through
+	// here, so even when many renders hit eviction the forced re-upload runs a
+	// single time (no per-prompt re-upload storm). reuploaded is flipped before
+	// the call so a forced re-upload that itself fails still counts — the run
+	// never attempts a second one. Inert for --repo / the no-flag path
+	// (ensureUploaded == nil), where no upload exists to redo.
+	reuploaded := false
+	forceReuploadOnce := func() error {
+		if ensureUploaded == nil || reuploaded {
+			return nil
+		}
+		reuploaded = true
+		return ensureUploaded(true)
+	}
+
 	var tools []toolDef
 	if !customOnly {
 		tools, err = fetchTools(cfg)
@@ -373,7 +398,7 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	// list ONCE; if it still 400s, fall through to the clean error below (no
 	// loop). Applies to both --repo-dir and --repo-fetch (ensureUploaded != nil).
 	if err != nil && ensureUploaded != nil && isEvictedSourceError(err, ov) {
-		if upErr := ensureUploaded(true); upErr != nil {
+		if upErr := forceReuploadOnce(); upErr != nil {
 			return "", "", upErr
 		}
 		prompts, source, err = fetchPrompts(cfg, ov)
@@ -477,6 +502,18 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 			continue
 		}
 		rendered, rerr := renderPrompt(cfg, p.Name, ov)
+		// Evict-retry for the render call, mirroring the list path: the in-memory
+		// source cache can be dropped AFTER a successful list but BEFORE a
+		// per-prompt render, which would otherwise degrade that skill to
+		// metadata-only. On a matching evict 400, force a single re-upload
+		// (bounded run-wide by forceReuploadOnce) and retry this render ONCE; if
+		// the re-upload or the retry still fails, fall through to the warn-and-
+		// continue / metadata-only path below — no infinite loop.
+		if rerr != nil && ensureUploaded != nil && isEvictedSourceError(rerr, ov) {
+			if upErr := forceReuploadOnce(); upErr == nil {
+				rendered, rerr = renderPrompt(cfg, p.Name, ov)
+			}
+		}
 		if rerr != nil {
 			// Never fail silently. A request-scoped override 4xx is reframed by
 			// sourceError into an actionable "skills source <repo> rejected: ..."

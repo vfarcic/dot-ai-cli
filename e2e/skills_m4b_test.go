@@ -241,6 +241,100 @@ func newEvictUntilReuploadedServer(t *testing.T) *captureServer {
 	return cs
 }
 
+// 3b. Evict-retry on the RENDER call (CodeRabbit fix [3]): the LIST succeeds, but
+// the source is evicted between the list and the per-prompt render — the render
+// 400s with re-upload guidance until the source has been uploaded TWICE. The CLI
+// must DETECT the render evict 400, force a single re-upload, retry the render
+// ONCE, and produce a FULLY rendered skill (the prompt body, not the metadata-
+// only fallback) — transparent recovery. Pre-fix this degraded to metadata-only.
+func TestSkillsGenerate_RepoDir_RenderEvicted_ReuploadRetrySucceeds(t *testing.T) {
+	cs := newEvictRenderUntilReuploadedServer(t)
+	src := repoDirSource(t, map[string]string{"p1/SKILL.md": "---\nname: p1\n---\nbody"})
+	out := t.TempDir()
+	env := []string{"DOT_AI_ALLOW_REPO_DIR=1", "USER=tester", "XDG_CACHE_HOME=" + t.TempDir()}
+
+	stdout, stderr, code := runCLIAtServer(t, cs.URL, env,
+		"skills", "generate", "--path", out, "--custom-only", "--repo-dir", src, "--source-label", "foo")
+	combined := stdout + stderr
+	// Transparent recovery: the run SUCCEEDS despite the first render being evicted.
+	if code != 0 {
+		t.Fatalf("expected exit 0 (transparent render evict recovery), got %d; output: %s", code, combined)
+	}
+	// The skill must carry the RENDERED body, proving the retried render succeeded
+	// (not the metadata-only fallback the un-retried render would have produced).
+	skillPath := filepath.Join(out, "dot-ai-p1", "SKILL.md")
+	body, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("expected dot-ai-p1 generated after the render evict-retry: %v", err)
+	}
+	if !strings.Contains(string(body), "RENDERED-BODY-OF-P1") {
+		t.Errorf("expected the fully rendered prompt body (not metadata-only), got:\n%s", string(body))
+	}
+	// The CLI announced the forced re-upload triggered by the render eviction.
+	if !strings.Contains(combined, "re-uploading") {
+		t.Errorf("expected a 're-uploading' notice on the render evict-retry, got: %s", combined)
+	}
+	// Exactly two uploads: the gated one, then the single forced re-upload.
+	if n := countCaptured(cs.snapshot(), http.MethodPost, "/api/v1/prompts/sources"); n != 2 {
+		t.Errorf("expected 2 uploads (gated + one forced re-upload), got %d", n)
+	}
+	for _, leak := range []string{"panic", "goroutine", "runtime error", "nil pointer", "VALIDATION_ERROR"} {
+		if strings.Contains(combined, leak) {
+			t.Errorf("render evict-retry leaked internal detail %q: %s", leak, combined)
+		}
+	}
+}
+
+// newEvictRenderUntilReuploadedServer accepts uploads and serves the LIST
+// normally, but 400s the per-prompt render (POST /api/v1/prompts/p1) with the
+// server's re-upload guidance until the source has been uploaded at least twice.
+// This models a source evicted AFTER a successful list but BEFORE the render,
+// which the render evict-retry must recover. The render succeeds (with a
+// distinctive body) once the forced re-upload has restored the source.
+func newEvictRenderUntilReuploadedServer(t *testing.T) *captureServer {
+	t.Helper()
+	cs := &captureServer{}
+	cs.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		cs.mu.Lock()
+		cs.requests = append(cs.requests, capturedRequest{
+			Method: r.Method,
+			Path:   r.URL.Path,
+			Query:  r.URL.Query(),
+			Body:   string(bodyBytes),
+		})
+		uploads := 0
+		for _, rq := range cs.requests {
+			if rq.Method == http.MethodPost && rq.Path == "/api/v1/prompts/sources" {
+				uploads++
+			}
+		}
+		cs.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/prompts/sources":
+			io.WriteString(w, `{"success":true,"data":{"source":`+jsonString(r.URL.Query().Get("source"))+`,"contentHash":"sha256:x","fileCount":1,"status":"ingested"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/prompts":
+			// The LIST always succeeds (the eviction happens after it).
+			io.WriteString(w, `{"success":true,"data":{"prompts":[{"name":"p1","description":"p1 desc"}],"source":`+jsonString(r.URL.Query().Get("source"))+`}}`)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/prompts/"):
+			if uploads >= 2 {
+				io.WriteString(w, `{"success":true,"data":{"description":"p1 desc","messages":[{"role":"user","content":{"type":"text","text":"RENDERED-BODY-OF-P1"}}]}}`)
+				return
+			}
+			src := r.URL.Query().Get("source")
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, `{"success":false,"error":{"code":"VALIDATION_ERROR","message":"Ingested source not found: `+src+`. (Re)upload it via POST /api/v1/prompts/sources before rendering."}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, `{"success":false,"error":{"code":"NOT_FOUND","message":"no route"}}`)
+		}
+	}))
+	t.Cleanup(cs.Close)
+	return cs
+}
+
 // --- `skills cache prune --older-than` ---
 
 // makeCacheEntry creates a clone-cache entry dir under cacheRoot keyed exactly as

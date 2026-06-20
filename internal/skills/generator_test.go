@@ -301,6 +301,49 @@ func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
+// PRD #13 CodeRabbit fix [1]: the X-Dot-AI-Git-Token header is gated on a REPO
+// override specifically (o.Repo != ""), not on active() — which is now also true
+// for a source-only override (--repo-dir/--repo-fetch). A source override must
+// NEVER forward the git token (it is meaningless without a server-side clone),
+// yet must still emit ?source= so the server resolves the CLI-uploaded source.
+// A repo override still forwards the token AND emits ?repo=.
+func TestOverride_TokenGatedOnRepoNotSource(t *testing.T) {
+	const tok = "git-tok-should-not-leak"
+
+	// Source-only override with a token set: NO credential header, but ?source=
+	// is still emitted so --repo-dir/--repo-fetch keep working.
+	src := Override{Source: "local:tester-foo", Token: tok}
+	if h := src.headers(); h != nil {
+		t.Errorf("source-only override must send NO %s header, got: %v", gitTokenHeader, h)
+	}
+	qp := src.queryParams()
+	if len(qp) != 1 || qp[0].Name != "source" || qp[0].Value != "local:tester-foo" {
+		t.Errorf("source-only override must still emit ?source=local:tester-foo, got: %+v", qp)
+	}
+	for _, p := range qp {
+		if p.Name == "repo" {
+			t.Errorf("source-only override must not emit ?repo=, got: %+v", qp)
+		}
+	}
+
+	// Repo override with a token set: the credential header IS forwarded, and
+	// ?repo= is emitted (no ?source=).
+	repo := Override{Repo: "https://github.com/orgA/skills", Token: tok}
+	h := repo.headers()
+	if h[gitTokenHeader] != tok {
+		t.Errorf("repo override must forward the %s header, got: %v", gitTokenHeader, h)
+	}
+	rqp := repo.queryParams()
+	if len(rqp) != 1 || rqp[0].Name != "repo" {
+		t.Errorf("repo override must emit ?repo=, got: %+v", rqp)
+	}
+
+	// A repo override with no token sends no header (nothing to forward).
+	if h := (Override{Repo: "https://github.com/orgA/skills"}).headers(); h != nil {
+		t.Errorf("repo override with no token must send no header, got: %v", h)
+	}
+}
+
 func TestWritePromptSkill_InvalidBase64(t *testing.T) {
 	dir := t.TempDir()
 
