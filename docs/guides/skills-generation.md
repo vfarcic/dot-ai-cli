@@ -172,6 +172,67 @@ dot-ai skills generate --agent claude-code --install-hook --repo https://gitlab.
 Each invocation of `--install-hook` writes one hook scoped to its source. See
 [Composing Skills From Multiple Repositories](#composing-skills-from-multiple-repositories) for the full model.
 
+### Global (User-Level) Install with `--global`
+
+By default the hook lands in the **project-local** `.claude/settings.json` and
+skills in `./.claude/skills`, so the catalog is available only in that one
+project. Add `--global` (requires `--agent claude-code`) to target the
+**user-level** `~/.claude` layout instead, so the shared catalog is available in
+**every** project you open:
+
+- The `SessionStart` hook is written to `~/.claude/settings.json` (resolved via
+  your home directory), not `./.claude/settings.json`.
+- Without `--path`, skills default to `~/.claude/skills` (the shared "global
+  catalog") instead of `./.claude/skills`.
+- It lifts the `--install-hook` / `--path` restriction (which still applies in
+  project mode), so a global hook can pair with a custom output directory.
+
+Team onboarding becomes a single, idempotent command:
+
+```bash
+dot-ai skills generate --agent claude-code --install-hook --global
+# Skills generated successfully in /home/you/.claude/skills
+# SessionStart hook installed in /home/you/.claude/settings.json
+```
+
+Or, to land the skills in a custom home-level directory:
+
+```bash
+dot-ai skills generate --agent claude-code --path ~/.claude/commands --install-hook --global
+```
+
+`--global` composes with every source flag (`--repo`, `--repo-fetch`,
+`--repo-dir`): the named source is round-tripped into the stored command and the
+hook lands in `~/.claude/settings.json`. Note that only **one** dot-ai
+`SessionStart` hook is kept at a time — running `--install-hook` again (for the
+same or a different source) **replaces** the existing dot-ai hook rather than
+adding a second one, so a later install wins. (The generated skill *files* are
+still source-scoped and accumulate across per-source runs — see [Composing
+Skills From Multiple Repositories](#composing-skills-from-multiple-repositories)
+— but the auto-refresh hook installed by `--install-hook` tracks a single
+source.) Installing a global hook merges with — and preserves — any unrelated
+content already in `~/.claude/settings.json`, and re-running is idempotent.
+
+`--global` is **round-tripped** into the stored hook command (`… --global`), so
+every session-start regenerates to the same place. It embeds the `--global`
+*flag*, not the resolved `~/.claude/skills` path, so the hook re-resolves against
+`$HOME` at each firing and stays portable if you sync your dotfiles to a machine
+with a different home. (A custom `--path` is stored as the absolute path the
+shell already expanded.)
+
+> **`--global` without `--install-hook`** is also valid — it is the "write to the
+> global catalog" mode: `dot-ai skills generate --agent claude-code --global`
+> generates skills into `~/.claude/skills` (no hook installed).
+
+> **Bonus — opencode discovery.** `~/.claude/skills` is not Claude-Code-only:
+> **opencode natively discovers skills from `~/.claude/skills/*/SKILL.md`**
+> (alongside `~/.config/opencode/skills/` and `~/.agents/skills/`) and ignores
+> unknown frontmatter fields, so the `source:` tag is harmless and the
+> `dot-ai-*` names satisfy its naming rule. A single `--global` install therefore
+> lights up **both** Claude Code and opencode for skill *discovery*, with zero
+> opencode-specific work. (Auto-refresh on opencode startup is a separate
+> follow-up — opencode has no `settings.json` `SessionStart` hook.)
+
 ## Updating Skills
 
 Re-running the command updates the `dot-ai-*` skills owned by the current source:
