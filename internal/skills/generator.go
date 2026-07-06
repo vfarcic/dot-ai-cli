@@ -331,8 +331,8 @@ func filterByName(names []string, include, exclude string) ([]string, error) {
 // untouched. Cross-source name collisions are resolved first-source-wins with
 // a warning to stderr. An exclusive file lock on <outDir>/.dot-ai.lock
 // serializes concurrent invocations.
-func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte, ov Override, ensureUploaded func(force bool) error) (string, string, error) {
-	outDir, err := resolveDir(agent, path)
+func Generate(cfg *config.Config, agent, path, include, exclude string, customOnly bool, routingSkill []byte, ov Override, ensureUploaded func(force bool) error, global bool) (string, string, error) {
+	outDir, err := resolveDir(agent, path, global)
 	if err != nil {
 		return "", "", err
 	}
@@ -547,9 +547,22 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	return outDir, source, nil
 }
 
-func resolveDir(agent, path string) (string, error) {
+// resolveDir picks the skills output directory. A user-supplied --path always
+// wins. Otherwise, in --global mode (PRD #19) skills default to the user-level
+// ~/.claude/skills catalog (resolved via os.UserHomeDir); --global is only
+// reachable with --agent claude-code (the CLI guards this), so the ~/.claude
+// layout is always the right home. In project mode the agent's default dir is
+// used (e.g. .claude/skills), exactly as before.
+func resolveDir(agent, path string, global bool) (string, error) {
 	if path != "" {
 		return path, nil
+	}
+	if global {
+		base, err := claudeHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(base, "skills"), nil
 	}
 	dir, ok := AgentDirs[agent]
 	if !ok {

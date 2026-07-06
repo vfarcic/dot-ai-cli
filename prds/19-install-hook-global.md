@@ -3,7 +3,7 @@
 > **GitHub Issue:** [vfarcic/dot-ai-cli#19](https://github.com/vfarcic/dot-ai-cli/issues/19)
 > **CLI-only:** no server change, no companion `vfarcic/dot-ai` dependency, no mock-image bump. Every touched surface is local to this repo.
 
-**Status**: Not started — planning. Milestones M1–M5 defined below.
+**Status**: Implementation complete — all milestones M1–M5 done; reviewed clean (reviewer + auditor, no blocking findings); full suite green (223 tests, 0 failures). Pending PR.
 **Priority**: Medium (a real onboarding-UX gap; a workaround exists — hand-edit `~/.claude/settings.json` and run a one-shot `generate` — but it is exactly the "no hand-editing JSON" experience `--install-hook` was built to remove).
 **Related Issues**: [`vfarcic/dot-ai-cli#12`](https://github.com/vfarcic/dot-ai-cli/issues/12) (the hook-per-source model + `source:`-tagged wipe-own-slice pipeline this rides on); [`vfarcic/dot-ai-cli#13`](https://github.com/vfarcic/dot-ai-cli/issues/13) (added the source flags that `BuildHookCommand` already round-trips — this PRD adds `--global`/`--path` to that same mechanism); [`vfarcic/dot-ai-cli#16`](https://github.com/vfarcic/dot-ai-cli/issues/16) (the `--repo`/token override that composes with `--global`).
 **External stakeholder**: [@vtmocanu](https://github.com/vfarcic/dot-ai-cli/issues/19) filed this from real team-onboarding friction; keep them updated.
@@ -37,7 +37,7 @@ Team onboarding becomes a single idempotent command:
 dot-ai skills generate --agent claude-code --path ~/.claude/commands --install-hook --global
 ```
 
-`--global` composes with the source flags (`--repo`, `--repo-fetch`, `--repo-dir`) unchanged — for the PRD #12 hook-per-source model, run the command once per source with `--global` and each source's hook lands in the user-level settings (Issue #19 Use Case 2).
+`--global` composes with the source flags (`--repo`, `--repo-fetch`, `--repo-dir`) unchanged — running once per source with `--global` generates each source's skill *files* into the global catalog (the `source:`-tagged wipe-own-slice pipeline keeps files from different sources side by side). **Correction (implementation finding):** the *hook* itself does **not** accumulate per source. `removeExistingHook` wipes **all** dot-ai `SessionStart` entries and inserts exactly one, so a later `--install-hook` run **replaces** the previous dot-ai hook rather than adding a second. Consequence: only the **last-installed** source is auto-regenerated on session start; earlier sources' files persist but are not refreshed by the hook. (The original Issue #19 "Use Case 2 — one hook per source" framing was inaccurate on this point; the shipped docs/changelog were corrected to match.)
 
 ### Bonus: `~/.claude/skills` is natively discoverable by opencode
 
@@ -80,26 +80,26 @@ This is a documentation note, **not** a scope item. Making opencode *auto-refres
 
 ## Milestones
 
-- [ ] **M1 — Flag + guard.** Add `--global` (help text). In `PreRunE`, lift the `--install-hook`/`--path` conflict guard when `--global` is set (keep it otherwise); retain `--install-hook` ⇒ `--agent claude-code`. Decide + document the "`--global` without `--install-hook`" behavior (see Open Questions).
-- [ ] **M2 — Path resolution.** Parameterize `InstallSessionHook` to write the resolved settings path; resolve `~/.claude/settings.json` in global mode via `os.UserHomeDir()`. Make `resolveDir` (or caller) default to `~/.claude/skills` for claude-code in global mode when `--path` is empty. Fix the hard-coded success message.
-- [ ] **M3 — Round-trip.** `BuildHookCommand` emits `--global` (+ `--path <dir>` when the user gave one), shell-quoted, so a re-fire regenerates to the same place. Confirm project-mode output is unchanged (byte-identical command string when `--global` absent).
-- [ ] **M4 — Tests.** e2e coverage with `HOME` isolation (set `HOME=t.TempDir()`): global hook lands in `$HOME/.claude/settings.json`; default skills land in `$HOME/.claude/skills`; `--path` override honored + round-tripped; shell-replay of the stored command regenerates to the same dir; project mode byte-identical; `--global` composes with a source flag; unrelated `~/.claude/settings.json` content preserved; idempotent re-run.
-- [ ] **M5 — Docs.** Update `docs/guides/skills-generation.md` (and any onboarding doc) with the `--global` flag, the one-command team-onboarding example, the `~/.claude/skills` default, and the opencode-discovery note. Add a changelog fragment.
+- [x] **M1 — Flag + guard.** Added `--global` (help text). In `PreRunE`, lift the `--install-hook`/`--path` conflict guard when `--global` is set (kept otherwise); retained `--install-hook` ⇒ `--agent claude-code`; added `--global` ⇒ `--agent claude-code` guard (a clear error beats a silent no-op for non-claude-code agents). Decided: `--global` **without** `--install-hook` is valid — a "write to the global catalog" mode that defaults skills to `~/.claude/skills`.
+- [x] **M2 — Path resolution.** Parameterized `InstallSessionHook` to write the resolved settings path (`ResolveSettingsPath`); resolve `~/.claude/settings.json` in global mode via `os.UserHomeDir()` (`claudeHomeDir`, clear error on missing/unreadable home). `resolveDir` defaults to `~/.claude/skills` for claude-code in global mode when `--path` is empty. Success message now reports the actual settings path written.
+- [x] **M3 — Round-trip.** `BuildHookCommand` emits `--global` (+ `--path <dir>` when the user gave one), shell-quoted. Decided: embed `--global` (re-resolved against `$HOME` each fire, host-portable) and store a user-supplied `--path` as an **absolute** path — `filepath.Abs` is applied before store because the shell only expands `~`, not relative paths, so a relative `--path` would otherwise break the round-trip. Project-mode command string is byte-identical when `--global` absent (guarded by test).
+- [x] **M4 — Tests.** e2e coverage with `HOME=t.TempDir()` isolation: global hook lands in `$HOME/.claude/settings.json`; default skills land in `$HOME/.claude/skills`; `--path` override honored + round-tripped; shell-replay regenerates to the same dir; project mode byte-identical; `--global` composes with a source flag **with credential scrubbing verified on a token-bearing URL**; unrelated `~/.claude/settings.json` content preserved; idempotent re-run; plus a `--path` shell-injection regression subtest.
+- [x] **M5 — Docs.** Updated `docs/guides/skills-generation.md` with the `--global` flag, the one-command team-onboarding example, the `~/.claude/skills` default, the host-portable round-trip note, the `--global`-without-hook mode, and the opencode-discovery note. Corrected the per-source hook wording to match actual behavior (see Solution correction). Added `changelog.d/19.feature.md`.
 
 ## Verification Checklist
 
-- [ ] **Guard lifted only with `--global`.** `--install-hook --path <dir>` without `--global` still errors; with `--global` it succeeds.
-- [ ] **Hook target.** With `--global`, the `SessionStart` entry is written to `$HOME/.claude/settings.json`; without it, to `./.claude/settings.json` (CWD-relative, as today).
-- [ ] **Default output dir.** `--global` with no `--path` writes skills to `$HOME/.claude/skills`; project mode writes to `./.claude/skills`.
-- [ ] **`--path` honored + round-tripped.** `--global --path <dir>` writes skills to `<dir>` and the stored command carries `--path <dir>` (shell-quoted); shell-replay regenerates to `<dir>`.
-- [ ] **`--global` round-tripped.** The stored command carries `--global`; shell-replay (with the same `$HOME`) regenerates to the same default dir.
-- [ ] **Project mode unchanged.** Stored command string, `.claude/settings.json`, and `.claude/skills` output are byte-identical to pre-#19 for a no-`--global` run.
-- [ ] **Compose with source flags.** `--global --repo-fetch <url>` (and `--repo`, `--repo-dir`) round-trips the source AND lands the hook in `$HOME/.claude/settings.json`; credential scrubbing on the stored URL is unchanged.
-- [ ] **Preserve + idempotent.** A pre-existing unrelated key/hook in `$HOME/.claude/settings.json` survives; running twice yields exactly one dot-ai `SessionStart` entry.
-- [ ] **Success message.** Output names the actual path written (global vs project).
+- [x] **Guard lifted only with `--global`.** `--install-hook --path <dir>` without `--global` still errors; with `--global` it succeeds.
+- [x] **Hook target.** With `--global`, the `SessionStart` entry is written to `$HOME/.claude/settings.json`; without it, to `./.claude/settings.json` (CWD-relative, as today).
+- [x] **Default output dir.** `--global` with no `--path` writes skills to `$HOME/.claude/skills`; project mode writes to `./.claude/skills`.
+- [x] **`--path` honored + round-tripped.** `--global --path <dir>` writes skills to `<dir>` and the stored command carries `--path <dir>` (shell-quoted, absolute); shell-replay regenerates to `<dir>`.
+- [x] **`--global` round-tripped.** The stored command carries `--global`; shell-replay (with the same `$HOME`) regenerates to the same default dir.
+- [x] **Project mode unchanged.** Stored command string, `.claude/settings.json`, and `.claude/skills` output are byte-identical to pre-#19 for a no-`--global` run.
+- [x] **Compose with source flags.** `--global --repo-fetch <url>` round-trips the source AND lands the hook in `$HOME/.claude/settings.json`; credential scrubbing on the stored URL is verified unchanged (token-bearing URL test).
+- [x] **Preserve + idempotent.** A pre-existing unrelated key/hook in `$HOME/.claude/settings.json` survives; running twice yields exactly one dot-ai `SessionStart` entry.
+- [x] **Success message.** Output names the actual path written (global vs project).
 
 ## Open Questions
 
-- **Round-trip form: embed `--global` vs. embed the resolved absolute `--path`?** *(Recommendation: embed `--global`.)* Embedding `--global` re-resolves `~/.claude/skills` against `$HOME` at each fire — host-portable (survives dotfile sync to a machine with a different home) and matches the "round-trip every flag" philosophy. The mild wrinkle: the *regeneration* command doesn't reinstall a hook, so `--global` there only affects the default output dir. The alternative — bake the resolved absolute path — removes that wrinkle but hard-codes one machine's home into `settings.json`. (Note: when the user passes `--path ~/x`, the shell expands `~` before the CLI sees it, so an absolute path is stored either way — this only concerns the no-`--path` default.) **Decide in M3.**
-- **Is `--global` meaningful without `--install-hook`?** i.e. should `dot-ai skills generate --agent claude-code --global` (no hook) default skills to `~/.claude/skills`? *(Leaning yes — it is a natural "write to the global catalog" mode and keeps `--global`'s meaning consistent — but confirm it doesn't muddy the flag's primary purpose.)* **Decide in M1.**
-- **Windows / non-standard `$HOME`.** `os.UserHomeDir()` is cross-platform; confirm the `~/.claude` layout assumption is acceptable (Claude Code itself uses it) and that a missing/unreadable home surfaces a clear error rather than writing to a surprising location.
+- **Round-trip form: embed `--global` vs. embed the resolved absolute `--path`?** **RESOLVED (M3): embed `--global`.** It re-resolves `~/.claude/skills` against `$HOME` at each fire — host-portable and consistent with the "round-trip every flag" philosophy. A user-supplied `--path` is stored **absolute** (`filepath.Abs`) so the round-trip holds even for a relative `--path` (the shell only expands `~`, not `./foo`), directly protecting Success Criterion #3.
+- **Is `--global` meaningful without `--install-hook`?** **RESOLVED (M1): yes.** `dot-ai skills generate --agent claude-code --global` (no hook) is a valid "write to the global catalog" mode and defaults skills to `~/.claude/skills`. Keeps `--global`'s meaning consistent regardless of `--install-hook`.
+- **Windows / non-standard `$HOME`.** **RESOLVED:** paths derive solely from `os.UserHomeDir()` (via `claudeHomeDir`); a missing/unreadable home fails closed with a clear `ExitToolError` and writes nothing — never a surprising location.

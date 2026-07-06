@@ -34,6 +34,35 @@ type HookSource struct {
 	NoCache     bool   // --no-cache (only meaningful with --repo-fetch)
 }
 
+// claudeHomeDir returns the user-level ~/.claude directory used by --global for
+// both the settings target (settings.json) and the default skills output. It is
+// resolved via os.UserHomeDir (cross-platform), and a missing/unreadable home
+// surfaces a clear error rather than writing to a surprising location (PRD #19).
+func claudeHomeDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", &client.RequestError{
+			Message:  fmt.Sprintf("Error: --global requires a resolvable home directory: %v", err),
+			ExitCode: client.ExitToolError,
+		}
+	}
+	return filepath.Join(home, ".claude"), nil
+}
+
+// ResolveSettingsPath returns the settings.json path the SessionStart hook is
+// written to: the project-local .claude/settings.json (CWD-relative, as before),
+// or the user-level ~/.claude/settings.json when global is set (PRD #19).
+func ResolveSettingsPath(global bool) (string, error) {
+	if !global {
+		return settingsFile, nil
+	}
+	base, err := claudeHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "settings.json"), nil
+}
+
 // shellQuote wraps a value in POSIX single quotes so a shell that executes the
 // stored hook command treats it as a literal string. A single-quoted shell word
 // undergoes NO expansion — $, backtick, $(...), and ${...} are all inert — which
@@ -73,8 +102,29 @@ func shellQuote(s string) string {
 // command string (Backward Compatibility): the quoting bytes changed from Go %q
 // double quotes to POSIX single quotes, but the shell parses both to the SAME
 // argument vector.
-func BuildHookCommand(include, exclude string, customOnly bool, ov Override, src HookSource) string {
+//
+// PRD #19 adds two round-tripped flags so a global hook regenerates to the same
+// place on every firing:
+//
+//   - global: emits --global. Per the M3 decision it embeds the FLAG, not the
+//     resolved ~/.claude/skills path, so each fire re-resolves against $HOME and
+//     the hook stays host-portable (survives dotfile sync to a different home).
+//   - path: emits --path <dir> when the user supplied --path. In global mode the
+//     caller has already resolved it to an absolute path (filepath.Abs) so the
+//     stored command replays to the SAME directory regardless of the CWD the
+//     global hook fires from (a relative path would otherwise re-resolve against
+//     the hook's arbitrary CWD and silently break the round-trip).
+//
+// Both are absent (and the output stays byte-identical to today) for a
+// project-mode run where --global is off and --path was not given.
+func BuildHookCommand(include, exclude string, customOnly bool, ov Override, src HookSource, global bool, path string) string {
 	cmd := hookCommandBase
+	if global {
+		cmd += " --global"
+	}
+	if path != "" {
+		cmd += " --path " + shellQuote(path)
+	}
 	if customOnly {
 		cmd += " --custom-only"
 	}
@@ -117,12 +167,15 @@ func BuildHookCommand(include, exclude string, customOnly bool, ov Override, src
 	return cmd
 }
 
-// InstallSessionHook writes a Claude Code SessionStart hook into
-// .claude/settings.json that re-runs skills generation on session startup.
-// It merges with existing settings and is idempotent. If an existing
-// dot-ai skills generate hook exists with different flags, it is replaced.
-func InstallSessionHook(command string) error {
-	settings, err := readSettings(settingsFile)
+// InstallSessionHook writes a Claude Code SessionStart hook into the given
+// settings file (settingsPath) that re-runs skills generation on session
+// startup. settingsPath is the project-local .claude/settings.json or, in
+// --global mode, ~/.claude/settings.json (see ResolveSettingsPath). The merge
+// logic (readSettings -> removeExistingHook -> insertHook -> writeSettings)
+// preserves unrelated content in that file and is idempotent: an existing
+// dot-ai skills generate hook with different flags is replaced, not duplicated.
+func InstallSessionHook(command, settingsPath string) error {
+	settings, err := readSettings(settingsPath)
 	if err != nil {
 		return err
 	}
@@ -134,7 +187,7 @@ func InstallSessionHook(command string) error {
 	removeExistingHook(settings)
 	insertHook(settings, command)
 
-	return writeSettings(settingsFile, settings)
+	return writeSettings(settingsPath, settings)
 }
 
 func readSettings(path string) (map[string]any, error) {

@@ -611,4 +611,58 @@ func TestSkillsGenerate_M5_InstallHook_ShellInjection_NotExecuted(t *testing.T) 
 			t.Fatalf("re-running the payload-bearing --include hook must succeed (the value is data), got exit %d; stdout: %s stderr: %s", rcode, rout, rerr)
 		}
 	})
+
+	// PRD #19 follow-up: BuildHookCommand also shellQuotes --path, and --global
+	// lifts the --install-hook/--path guard so a global hook can carry a custom
+	// --path. A metacharacter-laden --path must therefore round-trip as inert DATA
+	// too. This subtest installs a --global hook whose --path final component
+	// embeds a working payload, replays it THROUGH A SHELL, and asserts (a) the
+	// marker was NOT created (no execution) and (b) the literal path round-tripped
+	// (skills regenerate into the payload-named dir). --install-hook + --path
+	// requires --global, so HOME is isolated and the hook is read from
+	// $HOME/.claude/settings.json.
+	t.Run("path", func(t *testing.T) {
+		const marker = "PWNED_path"
+		parent := t.TempDir() // --path has no AuthorizeRepoDir restriction, unlike --repo-dir.
+		// An ABSOLUTE --path (as the shell hands the CLI, and as Fix 1 stores it)
+		// whose final component embeds the payload. No '/' in the payload, so an
+		// injected `touch` would create a RELATIVE marker in the replay's CWD.
+		evil := filepath.Join(parent, "evil$(touch${IFS}"+marker+")")
+
+		home := t.TempDir()
+		project := t.TempDir()
+		_, stderr, code := runCLIInDir(t, project, globalEnv(home),
+			"skills", "generate", "--agent", "claude-code", "--install-hook", "--global",
+			"--path", evil, "--custom-only")
+		if code != 0 {
+			t.Fatalf("install with a payload-named --global --path must succeed (the path is a literal dir name, no shell at build), got exit %d; stderr: %s", code, stderr)
+		}
+
+		command, raw := readHookCommand(t, home)
+		// Stored as DATA: the literal payload path survives verbatim into settings.json.
+		if !strings.Contains(raw, "evil$(touch${IFS}"+marker+")") {
+			t.Fatalf("expected the literal --path payload stored verbatim in settings.json, got: %s", raw)
+		}
+		if !strings.Contains(command, "--path") {
+			t.Fatalf("expected the stored command to carry --path, got: %s", command)
+		}
+
+		// Clear the install-time output so the post-replay check genuinely proves
+		// the REPLAY regenerated into the round-tripped absolute --path.
+		if err := os.RemoveAll(evil); err != nil {
+			t.Fatalf("clear install-time output: %v", err)
+		}
+
+		workdir, rout, rerr, rcode := rerunHookCommand(t, globalEnv(t.TempDir()), command)
+		// No execution: the $(...) must never have run, anywhere we can observe.
+		assertNoMarker(t, marker, workdir, parent, home, base)
+		if rcode != 0 {
+			t.Fatalf("re-running the payload-named --global --path hook must succeed (the value is data), got exit %d; stdout: %s stderr: %s", rcode, rout, rerr)
+		}
+		// Round-tripped as DATA: replay regenerated into the payload-named absolute
+		// --path (the $(...) reached the CLI as a literal path component).
+		if _, err := os.Stat(filepath.Join(evil, "dot-ai", "SKILL.md")); err != nil {
+			t.Errorf("replay must regenerate into the round-tripped --path %s: %v", evil, err)
+		}
+	})
 }

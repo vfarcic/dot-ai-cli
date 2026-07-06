@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ func agentNames() []string {
 var skillsAgent string
 var skillsPath string
 var skillsInstallHook bool
+var skillsGlobal bool
 var skillsPullLatest bool
 var skillsInclude string
 var skillsExclude string
@@ -126,11 +128,25 @@ one agent hook per source.`,
 				return fmt.Errorf("invalid value %q for flag --agent: must be one of [%s]", skillsAgent, strings.Join(agentNames(), ", "))
 			}
 		}
+		// PRD #19: --global targets the user-level ~/.claude layout (the hook in
+		// ~/.claude/settings.json, the default skills dir ~/.claude/skills). That
+		// layout is Claude Code's home, so --global — like --install-hook — is only
+		// meaningful for --agent claude-code (a cursor/windsurf --global would be a
+		// silent no-op). Reject the combination up front rather than surprise the
+		// user. --global WITHOUT --install-hook is valid: it is the "write to the
+		// global catalog" mode (default output ~/.claude/skills).
+		if skillsGlobal && skillsAgent != "claude-code" {
+			return fmt.Errorf("--global requires --agent claude-code")
+		}
 		if skillsInstallHook {
 			if skillsAgent != "claude-code" {
 				return fmt.Errorf("--install-hook requires --agent claude-code")
 			}
-			if skillsPath != "" {
+			// A project-mode hook always regenerates into the agent's default dir,
+			// so --path is rejected. --global (PRD #19) lifts this: a user-level hook
+			// may target a custom --path (e.g. ~/.claude/commands) and round-trips it,
+			// so the guard applies only when --global is absent.
+			if skillsPath != "" && !skillsGlobal {
 				return fmt.Errorf("--install-hook cannot be used with --path")
 			}
 			// PRD #13 M5: --install-hook now round-trips the --repo-dir/--repo-fetch
@@ -261,7 +277,23 @@ one agent hook per source.`,
 		if err != nil {
 			return err
 		}
-		outDir, source, err := skills.Generate(GetConfig(), skillsAgent, skillsPath, include, exclude, customOnly, RoutingSkill, ov, ensureUploaded)
+		// PRD #19 follow-up (Success Criterion #3): a global hook fires from an
+		// arbitrary working directory, so a RELATIVE --path stored verbatim in the
+		// hook command would replay-resolve against a different dir than install
+		// and silently break the round-trip. Resolve --path to an absolute path
+		// before it feeds BOTH Generate and BuildHookCommand, so the stored command
+		// always carries an absolute path (the shell only expands a leading ~, not
+		// ./foo or foo/bar). Scoped to --global: project mode rejects --install-hook
+		// with --path, so its stored command stays byte-identical.
+		outputPath := skillsPath
+		if skillsGlobal && outputPath != "" {
+			abs, err := filepath.Abs(outputPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve --path %q to an absolute path: %w", outputPath, err)
+			}
+			outputPath = abs
+		}
+		outDir, source, err := skills.Generate(GetConfig(), skillsAgent, outputPath, include, exclude, customOnly, RoutingSkill, ov, ensureUploaded, skillsGlobal)
 		if err != nil {
 			return err
 		}
@@ -273,16 +305,23 @@ one agent hook per source.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "Source: %s\n", skills.RedactURL(source))
 		}
 		if skillsInstallHook {
+			// PRD #19: in --global mode the hook lands in ~/.claude/settings.json
+			// (resolved via os.UserHomeDir); otherwise the project-local
+			// .claude/settings.json, exactly as before.
+			settingsPath, err := skills.ResolveSettingsPath(skillsGlobal)
+			if err != nil {
+				return err
+			}
 			hookCmd := skills.BuildHookCommand(include, exclude, customOnly, ov, skills.HookSource{
 				RepoFetch:   skillsRepoFetch,
 				RepoDir:     skillsRepoDir,
 				SourceLabel: skillsSourceLabel,
 				NoCache:     skillsNoCache,
-			})
-			if err := skills.InstallSessionHook(hookCmd); err != nil {
+			}, skillsGlobal, outputPath)
+			if err := skills.InstallSessionHook(hookCmd, settingsPath); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "SessionStart hook installed in %s\n", ".claude/settings.json")
+			fmt.Fprintf(cmd.OutOrStdout(), "SessionStart hook installed in %s\n", settingsPath)
 		}
 		return nil
 	},
@@ -342,6 +381,7 @@ func init() {
 	skillsGenerateCmd.Flags().StringVar(&skillsAgent, "agent", "", "Target agent: "+strings.Join(agentNames(), ", "))
 	skillsGenerateCmd.Flags().StringVar(&skillsPath, "path", "", "Override output directory (for unsupported agents)")
 	skillsGenerateCmd.Flags().BoolVar(&skillsInstallHook, "install-hook", false, "Install a Claude Code SessionStart hook that regenerates skills on startup (requires --agent claude-code). Round-trips the source flags (--repo, --repo-fetch, --repo-path/--repo-branch, --no-cache, --repo-dir/--source-label), with any URL credential scrubbed. Secrets and opt-ins are never written to settings.json and must be set in the environment at hook-run time: a --repo hook reads DOT_AI_GIT_TOKEN; a --repo-dir hook reads DOT_AI_ALLOW_REPO_DIR.")
+	skillsGenerateCmd.Flags().BoolVar(&skillsGlobal, "global", false, "Target the user-level ~/.claude layout instead of the project-local one (requires --agent claude-code). With --install-hook the SessionStart hook is written to ~/.claude/settings.json (not ./.claude/settings.json), and it lifts the --install-hook/--path restriction so a global hook can pair with a custom --path. Without --path, skills default to ~/.claude/skills (the shared \"global catalog\", also natively discovered by opencode) instead of ./.claude/skills. --global is round-tripped into the hook command so every session-start regenerates to the same place.")
 	skillsGenerateCmd.Flags().BoolVar(&skillsPullLatest, "pull-latest", false, "Force the server to pull the latest skills from the git repository before generating")
 	skillsGenerateCmd.Flags().StringVar(&skillsInclude, "include", "", "Regex to filter skills to include (env: DOT_AI_SKILLS_INCLUDE)")
 	skillsGenerateCmd.Flags().StringVar(&skillsExclude, "exclude", "", "Regex to filter skills to exclude (env: DOT_AI_SKILLS_EXCLUDE)")
