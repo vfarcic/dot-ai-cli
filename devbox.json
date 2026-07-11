@@ -3,7 +3,7 @@
   "packages": [
     "nushell@0.108.0",
     "kubernetes-helm@3.19.1",
-    "git@2.51.2",
+    "git@2.54.0",
     "vals@0.42.6",
     "kind@0.31.0",
     "kubectl@1.33.4",
