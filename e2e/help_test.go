@@ -182,9 +182,14 @@ func TestCompletion_EnumFlag_DataType(t *testing.T) {
 		t.Fatalf("expected exit 0, got error: %v", err)
 	}
 	stdout := string(out)
-	for _, val := range []string{"pattern", "policy", "capabilities"} {
-		if !strings.Contains(stdout, val) {
-			t.Errorf("expected completion to include %q, got: %s", val, stdout)
+	// As of dot-ai v1.24.0 (PRD #375, unified knowledge base), manageOrgData
+	// is capabilities-only; patterns/policies moved to the manageKnowledge tool.
+	if !strings.Contains(stdout, "capabilities") {
+		t.Errorf("expected completion to include %q, got: %s", "capabilities", stdout)
+	}
+	for _, val := range []string{"pattern", "policy"} {
+		if strings.Contains(stdout, val) {
+			t.Errorf("expected completion to no longer include %q (moved to manageKnowledge), got: %s", val, stdout)
 		}
 	}
 	// Directive :4 means ShellCompDirectiveNoFileComp.
