@@ -475,3 +475,88 @@ func TestCloneFailureMessage_TimeoutScrubsURL(t *testing.T) {
 		t.Errorf("expected a timeout message, got: %s", msg)
 	}
 }
+
+// validSkillName mirrors the agent constraint that a skill name may only
+// contain lowercase a-z, 0-9, and hyphens.
+func validSkillName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func TestSkillSegment_NormalizesInvalidNames(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"impact_analysis", "impact-analysis"},
+		{"manageKnowledge", "manage-knowledge"},
+		{"manageOrgData", "manage-org-data"},
+		{"projectSetup", "project-setup"},
+		{"recommend", "recommend"},                 // already valid, unchanged
+		{"prd-create", "prd-create"},               // already kebab-case, unchanged
+		{"version", "version"},                     // simple lowercase
+		{"a__b", "a-b"},                            // collapse hyphen runs
+		{"_leading_trailing_", "leading-trailing"}, // trim
+	}
+	for _, c := range cases {
+		if got := skillSegment(c.in); got != c.want {
+			t.Errorf("skillSegment(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestWriteToolSkill_NormalizesName is the regression for the agent "name
+// contains invalid characters" warning: a camelCase/underscore tool name must
+// produce a valid skill directory and `name:` frontmatter, while the CLI
+// command in the body keeps the tool's real name.
+func TestWriteToolSkill_NormalizesName(t *testing.T) {
+	dir := t.TempDir()
+	tool := toolDef{Name: "manageKnowledge", Description: "Manage the knowledge base"}
+
+	if err := writeToolSkill(dir, tool, ""); err != nil {
+		t.Fatalf("writeToolSkill: %v", err)
+	}
+
+	skillDir := filepath.Join(dir, "dot-ai-manage-knowledge")
+	content, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("expected SKILL.md in normalized dir: %v", err)
+	}
+	s := string(content)
+
+	if !strings.Contains(s, "name: dot-ai-manage-knowledge\n") {
+		t.Errorf("frontmatter name not normalized:\n%s", s)
+	}
+	// The generated name must satisfy the agent character constraint.
+	if !validSkillName("dot-ai-manage-knowledge") {
+		t.Fatal("test expectation is itself invalid")
+	}
+	// The CLI command in the body must keep the tool's real name.
+	if !strings.Contains(s, "dot-ai manageKnowledge") {
+		t.Errorf("usage should invoke the real command name:\n%s", s)
+	}
+}
+
+func TestWritePromptSkill_NormalizesName(t *testing.T) {
+	dir := t.TempDir()
+	p := promptDef{Name: "someWeird_Name", Description: "x"}
+
+	if err := writePromptSkill(dir, p, nil, ""); err != nil {
+		t.Fatalf("writePromptSkill: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "dot-ai-some-weird-name", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("expected SKILL.md in normalized dir: %v", err)
+	}
+	if !strings.Contains(string(content), "name: dot-ai-some-weird-name\n") {
+		t.Errorf("frontmatter name not normalized:\n%s", string(content))
+	}
+}

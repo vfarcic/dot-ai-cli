@@ -484,7 +484,7 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	}
 
 	for _, t := range tools {
-		if other, ok := existing["dot-ai-"+t.Name]; ok && other.Source != "" && other.Source != source {
+		if other, ok := existing[skillName(t.Name)]; ok && other.Source != "" && other.Source != source {
 			fmt.Fprintf(os.Stderr, "warning: skipping %q: already provided by source %q (first-source-wins)\n", t.Name, RedactURL(other.Source))
 			continue
 		}
@@ -497,7 +497,7 @@ func Generate(cfg *config.Config, agent, path, include, exclude string, customOn
 	}
 
 	for _, p := range prompts {
-		if other, ok := existing["dot-ai-"+p.Name]; ok && other.Source != "" && other.Source != source {
+		if other, ok := existing[skillName(p.Name)]; ok && other.Source != "" && other.Source != source {
 			fmt.Fprintf(os.Stderr, "warning: skipping %q: already provided by source %q (first-source-wins)\n", p.Name, RedactURL(other.Source))
 			continue
 		}
@@ -655,15 +655,56 @@ func scanExistingSkills(dir string) (map[string]existingSkill, error) {
 	return out, nil
 }
 
+// hyphenRun matches one or more consecutive hyphens, used to collapse them in
+// skillSegment.
+var hyphenRun = regexp.MustCompile(`-+`)
+
+// skillName is the directory name and `name:` frontmatter value for a skill
+// generated from a tool or prompt. Agents require a skill name of lowercase
+// a-z, 0-9, and hyphens only, but tool/prompt names may be camelCase or contain
+// underscores (manageOrgData, impact_analysis). This normalizes the raw name to
+// that character set. The CLI command shown in the skill body still uses the
+// tool's real name — only the skill's identity is normalized.
+func skillName(name string) string {
+	return "dot-ai-" + skillSegment(name)
+}
+
+// skillSegment normalizes a tool or prompt name into a valid skill-name
+// segment (lowercase a-z, 0-9, hyphens). camelCase boundaries and underscores
+// become hyphens (manageOrgData → manage-org-data, impact_analysis →
+// impact-analysis); any other disallowed character becomes a hyphen, runs of
+// hyphens collapse to one, and leading/trailing hyphens are trimmed.
+func skillSegment(name string) string {
+	var b strings.Builder
+	var prev rune
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			// Split a camelCase boundary: an uppercase letter following a
+			// lowercase letter or digit starts a new word.
+			if prev >= 'a' && prev <= 'z' || prev >= '0' && prev <= '9' {
+				b.WriteByte('-')
+			}
+			b.WriteRune(r + ('a' - 'A'))
+		default:
+			b.WriteByte('-')
+		}
+		prev = r
+	}
+	return strings.Trim(hyphenRun.ReplaceAllString(b.String(), "-"), "-")
+}
+
 func writeToolSkill(dir string, t toolDef, source string) error {
-	skillDir := filepath.Join(dir, "dot-ai-"+t.Name)
+	skillDir := filepath.Join(dir, skillName(t.Name))
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return err
 	}
 
 	var b strings.Builder
 	b.WriteString("---\n")
-	b.WriteString(fmt.Sprintf("name: dot-ai-%s\n", t.Name))
+	b.WriteString(fmt.Sprintf("name: %s\n", skillName(t.Name)))
 	b.WriteString(fmt.Sprintf("description: %s\n", yamlEscape(t.Description)))
 	b.WriteString("user-invocable: true\n")
 	if source != "" {
@@ -720,14 +761,14 @@ func writeToolSkill(dir string, t toolDef, source string) error {
 }
 
 func writePromptSkill(dir string, p promptDef, rendered *promptRenderResponse, source string) error {
-	skillDir := filepath.Join(dir, "dot-ai-"+p.Name)
+	skillDir := filepath.Join(dir, skillName(p.Name))
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return err
 	}
 
 	var b strings.Builder
 	b.WriteString("---\n")
-	b.WriteString(fmt.Sprintf("name: dot-ai-%s\n", p.Name))
+	b.WriteString(fmt.Sprintf("name: %s\n", skillName(p.Name)))
 	desc := p.Description
 	if desc == "" {
 		desc = p.Name + " prompt"
