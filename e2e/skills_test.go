@@ -28,22 +28,35 @@ func TestSkillsGenerate_CreatesToolSkills(t *testing.T) {
 	}
 
 	// Verify tool skills were created (fixture has all server tools).
-	for _, tool := range []string{"query", "recommend", "remediate", "operate", "manageOrgData", "manageKnowledge", "version", "projectSetup", "users"} {
-		skillPath := filepath.Join(dir, "dot-ai-"+tool, "SKILL.md")
+	// A skill's identity is normalized to lowercase-and-hyphens, so a camelCase
+	// tool name yields a different directory and frontmatter name, while the
+	// usage line in the body keeps the tool's real name.
+	for _, tool := range []struct{ name, skill string }{
+		{"query", "query"},
+		{"recommend", "recommend"},
+		{"remediate", "remediate"},
+		{"operate", "operate"},
+		{"manageOrgData", "manage-org-data"},
+		{"manageKnowledge", "manage-knowledge"},
+		{"version", "version"},
+		{"projectSetup", "project-setup"},
+		{"users", "users"},
+	} {
+		skillPath := filepath.Join(dir, "dot-ai-"+tool.skill, "SKILL.md")
 		content, err := os.ReadFile(skillPath)
 		if err != nil {
 			t.Errorf("expected skill file %s to exist: %v", skillPath, err)
 			continue
 		}
 		s := string(content)
-		if !strings.Contains(s, "name: dot-ai-"+tool) {
-			t.Errorf("skill %s missing name in frontmatter", tool)
+		if !strings.Contains(s, "name: dot-ai-"+tool.skill) {
+			t.Errorf("skill %s missing name in frontmatter", tool.name)
 		}
 		if !strings.Contains(s, "user-invocable: true") {
-			t.Errorf("skill %s missing user-invocable flag", tool)
+			t.Errorf("skill %s missing user-invocable flag", tool.name)
 		}
-		if !strings.Contains(s, "dot-ai "+tool) {
-			t.Errorf("skill %s missing usage reference", tool)
+		if !strings.Contains(s, "dot-ai "+tool.name) {
+			t.Errorf("skill %s missing usage reference", tool.name)
 		}
 	}
 }
